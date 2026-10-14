@@ -1,0 +1,511 @@
+import "@fontsource/gaegu/latin-400.css";
+import "@fontsource/gaegu/latin-700.css";
+import "@fontsource/mali/latin-500.css";
+import "@fontsource/mali/latin-600.css";
+import "./estilo.css";
+import { carregar, pronta, temTinta } from "./imagens.ts";
+import { cenaSalva, faseSalva, salvarAgora, salvarCena, salvarFase } from "./estado.ts";
+import { salvarFoto } from "./foto.ts";
+import type { AdesivoManifest, Colado, FaseManifest, Manifest } from "./tipos.ts";
+
+const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
+
+const elFases = $("fases");
+const palco = $("palco");
+const mundo = $("mundo");
+const imgComodo = $<HTMLImageElement>("comodo");
+const camadaColados = $("colados");
+const dica = $("dica");
+const ferramentas = $("ferramentas");
+const paleta = $("paleta");
+const trilho = $("paleta-trilho");
+const dialogoLimpar = $<HTMLDialogElement>("dialogo-limpar");
+
+const ESCALA_MIN = 0.35;
+const ESCALA_MAX = 3;
+const PASSO_ESCALA = 1.15;
+/** Quanto o dedo precisa andar para virar arrasto (px de tela). */
+const LIMIAR = 8;
+
+let manifest: Manifest;
+let fase: FaseManifest;
+let porId = new Map<string, AdesivoManifest>();
+let colados: Colado[] = [];
+const elementos = new Map<string, HTMLElement>();
+let selecionado: string | null = null;
+
+// Transformação do mundo (pixels da folha) para o palco (pixels de tela).
+let escalaMundo = 1;
+let origemX = 0;
+let origemY = 0;
+
+// ---------------------------------------------------------------- utilidades
+
+const uid = () =>
+  globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+
+const limitar = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
+
+function paraMundo(clientX: number, clientY: number) {
+  const r = palco.getBoundingClientRect();
+  return { x: (clientX - r.left - origemX) / escalaMundo, y: (clientY - r.top - origemY) / escalaMundo };
+}
+
+function sobreAPaleta(clientX: number, clientY: number) {
+  const r = paleta.getBoundingClientRect();
+  return clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom;
+}
+
+function aviso(texto: string) {
+  document.querySelector(".aviso")?.remove();
+  const el = document.createElement("div");
+  el.className = "aviso";
+  el.setAttribute("role", "status");
+  el.textContent = texto;
+  document.body.append(el);
+  setTimeout(() => el.remove(), 2200);
+}
+
+function guardar() {
+  salvarCena(fase.id, colados);
+}
+
+// ---------------------------------------------------------------- palco
+
+function ajustarMundo() {
+  if (!fase) return;
+  const { w, h } = fase.comodo;
+  const pw = palco.clientWidth;
+  const ph = palco.clientHeight;
+  const margem = Math.min(16, pw * 0.04);
+  escalaMundo = Math.max(0.1, Math.min((pw - margem * 2) / w, (ph - margem * 2) / h));
+  origemX = (pw - w * escalaMundo) / 2;
+  origemY = (ph - h * escalaMundo) / 2;
+  mundo.style.width = `${w}px`;
+  mundo.style.height = `${h}px`;
+  mundo.style.transform = `translate(${origemX}px, ${origemY}px) scale(${escalaMundo})`;
+}
+
+new ResizeObserver(ajustarMundo).observe(palco);
+
+/** Mantém o centro do adesivo dentro da área visível do palco. */
+function prenderNaTela(c: Colado) {
+  const minX = -origemX / escalaMundo;
+  const minY = -origemY / escalaMundo;
+  const maxX = (palco.clientWidth - origemX) / escalaMundo;
+  const maxY = (palco.clientHeight - origemY) / escalaMundo;
+  c.x = limitar(c.x, minX + 6, maxX - 6);
+  c.y = limitar(c.y, minY + 6, maxY - 6);
+}
+
+// ---------------------------------------------------------------- adesivos colados
+
+function desenhar(c: Colado) {
+  const el = elementos.get(c.uid);
+  if (!el) return;
+  el.style.setProperty("--x", String(c.x));
+  el.style.setProperty("--y", String(c.y));
+  el.style.setProperty("--s", String(c.escala));
+  el.style.setProperty("--fx", c.espelhado ? "-1" : "1");
+  el.style.zIndex = String(c.z);
+}
+
+function criarElemento(c: Colado) {
+  const a = porId.get(c.aid);
+  if (!a) return;
+  const el = document.createElement("div");
+  el.className = "colado";
+  el.style.width = `${a.w}px`;
+  el.style.height = `${a.h}px`;
+  const img = document.createElement("img");
+  img.src = a.src;
+  img.alt = "";
+  img.draggable = false;
+  el.append(img);
+  camadaColados.append(el);
+  elementos.set(c.uid, el);
+  desenhar(c);
+}
+
+function proximoZ() {
+  return colados.reduce((m, c) => Math.max(m, c.z), 0) + 1;
+}
+
+function trazerPraFrente(c: Colado) {
+  if (colados.some((o) => o !== c && o.z >= c.z)) c.z = proximoZ();
+  desenhar(c);
+}
+
+function selecionar(id: string | null) {
+  if (selecionado) elementos.get(selecionado)?.classList.remove("selecionado");
+  selecionado = id;
+  if (id) elementos.get(id)?.classList.add("selecionado");
+  ferramentas.hidden = !id;
+  atualizarDica();
+}
+
+function atualizarDica() {
+  dica.hidden = colados.length > 0;
+}
+
+function colar(aid: string, x: number, y: number): Colado {
+  const c: Colado = { uid: uid(), aid, x, y, escala: 1, espelhado: false, z: proximoZ() };
+  colados.push(c);
+  criarElemento(c);
+  atualizarDica();
+  return c;
+}
+
+function descolar(id: string) {
+  const el = elementos.get(id);
+  colados = colados.filter((c) => c.uid !== id);
+  elementos.delete(id);
+  if (selecionado === id) selecionar(null);
+  if (el) {
+    el.classList.add("saindo");
+    setTimeout(() => el.remove(), 200);
+  }
+  atualizarDica();
+  guardar();
+}
+
+/** Qual adesivo está sob o dedo? Respeita a transparência e a ordem de empilhamento. */
+function adesivoEm(wx: number, wy: number): Colado | undefined {
+  const ordem = [...colados].sort((a, b) => b.z - a.z);
+  for (const c of ordem) {
+    const a = porId.get(c.aid);
+    if (!a) continue;
+    const lx = (wx - c.x) / (c.escala * (c.espelhado ? -1 : 1)) + a.w / 2;
+    const ly = (wy - c.y) / c.escala + a.h / 2;
+    if (lx < 0 || ly < 0 || lx >= a.w || ly >= a.h) continue;
+    const im = pronta(a.src);
+    if (!im || temTinta(im, lx, ly, Math.max(2, Math.round(4 / (c.escala * escalaMundo))))) return c;
+  }
+  return undefined;
+}
+
+// ---------------------------------------------------------------- gestos
+
+interface Arrasto {
+  pid: number;
+  c: Colado;
+  dx: number;
+  dy: number;
+  x0: number;
+  y0: number;
+  moveu: boolean;
+}
+
+interface Pinca {
+  c: Colado;
+  dist0: number;
+  escala0: number;
+}
+
+interface Candidato {
+  pid: number;
+  aid: string;
+  x0: number;
+  y0: number;
+}
+
+const dedos = new Map<number, { x: number; y: number }>();
+let arrasto: Arrasto | null = null;
+let pinca: Pinca | null = null;
+let candidato: Candidato | null = null;
+
+function distanciaDedos() {
+  const [a, b] = [...dedos.values()];
+  return Math.hypot(a.x - b.x, a.y - b.y) || 1;
+}
+
+function iniciarArrasto(pid: number, c: Colado, clientX: number, clientY: number, x0 = clientX, y0 = clientY) {
+  const p = paraMundo(clientX, clientY);
+  arrasto = { pid, c, dx: c.x - p.x, dy: c.y - p.y, x0, y0, moveu: false };
+  trazerPraFrente(c);
+  selecionar(c.uid);
+  elementos.get(c.uid)?.classList.add("segurando");
+  palco.classList.add("arrastando");
+}
+
+function moverArrasto(clientX: number, clientY: number) {
+  if (!arrasto) return;
+  if (!arrasto.moveu && Math.hypot(clientX - arrasto.x0, clientY - arrasto.y0) < LIMIAR) return;
+  arrasto.moveu = true;
+  const p = paraMundo(clientX, clientY);
+  arrasto.c.x = p.x + arrasto.dx;
+  arrasto.c.y = p.y + arrasto.dy;
+  desenhar(arrasto.c);
+  paleta.classList.toggle("alvo", sobreAPaleta(clientX, clientY));
+}
+
+function terminarArrasto(clientX: number, clientY: number) {
+  if (!arrasto) return;
+  const { c } = arrasto;
+  elementos.get(c.uid)?.classList.remove("segurando");
+  paleta.classList.remove("alvo");
+  palco.classList.remove("arrastando");
+  arrasto = null;
+  if (sobreAPaleta(clientX, clientY)) {
+    descolar(c.uid);
+    return;
+  }
+  prenderNaTela(c);
+  desenhar(c);
+  guardar();
+}
+
+palco.addEventListener("pointerdown", (e) => {
+  if ((e.target as HTMLElement).closest(".ferramentas, .acoes")) return;
+  dedos.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+  if (dedos.size === 2 && selecionado) {
+    // Pinça com dois dedos: muda o tamanho do adesivo selecionado.
+    const c = colados.find((o) => o.uid === selecionado);
+    if (c) {
+      pinca = { c, dist0: distanciaDedos(), escala0: c.escala };
+      if (arrasto) elementos.get(arrasto.c.uid)?.classList.remove("segurando");
+      palco.classList.remove("arrastando");
+      arrasto = null;
+    }
+    return;
+  }
+  if (dedos.size > 1) return;
+
+  const p = paraMundo(e.clientX, e.clientY);
+  const c = adesivoEm(p.x, p.y);
+  if (c) iniciarArrasto(e.pointerId, c, e.clientX, e.clientY);
+  else selecionar(null);
+});
+
+trilho.addEventListener("pointerdown", (e) => {
+  const fig = (e.target as HTMLElement).closest<HTMLElement>(".figurinha");
+  if (!fig || arrasto) return;
+  candidato = { pid: e.pointerId, aid: fig.dataset.aid!, x0: e.clientX, y0: e.clientY };
+});
+
+window.addEventListener("pointermove", (e) => {
+  if (dedos.has(e.pointerId)) dedos.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+  if (pinca && dedos.size >= 2) {
+    pinca.c.escala = limitar((pinca.escala0 * distanciaDedos()) / pinca.dist0, ESCALA_MIN, ESCALA_MAX);
+    desenhar(pinca.c);
+    return;
+  }
+
+  if (candidato && e.pointerId === candidato.pid) {
+    const dx = e.clientX - candidato.x0;
+    const dy = e.clientY - candidato.y0;
+    // Puxar para cima descola o adesivo da cartela; andar para o lado rola a cartela.
+    if (Math.hypot(dx, dy) >= LIMIAR && -dy > Math.abs(dx) * 0.8) {
+      const a = porId.get(candidato.aid);
+      if (a) {
+        const p = paraMundo(e.clientX, e.clientY);
+        // O dedo segura a parte de baixo do adesivo, para dar para ver onde vai colar.
+        const c = colar(a.id, p.x, p.y - a.h * 0.3);
+        iniciarArrasto(e.pointerId, c, e.clientX, e.clientY, candidato.x0, candidato.y0);
+        arrasto!.moveu = true;
+        dedos.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      }
+      candidato = null;
+    } else if (Math.abs(dx) > LIMIAR * 1.5) {
+      candidato = null;
+    }
+  }
+
+  if (arrasto && e.pointerId === arrasto.pid) moverArrasto(e.clientX, e.clientY);
+});
+
+function soltar(e: PointerEvent) {
+  dedos.delete(e.pointerId);
+
+  if (candidato && e.pointerId === candidato.pid) {
+    // Toque simples na cartela: cola no meio do cômodo.
+    if (e.type === "pointerup") {
+      const c = colar(candidato.aid, fase.comodo.w / 2 + (Math.random() - 0.5) * 40, fase.comodo.h * 0.6 + (Math.random() - 0.5) * 30);
+      selecionar(c.uid);
+      guardar();
+    }
+    candidato = null;
+    return;
+  }
+
+  if (pinca) {
+    if (dedos.size < 2) {
+      guardar();
+      pinca = null;
+    }
+    return;
+  }
+
+  if (arrasto && e.pointerId === arrasto.pid) terminarArrasto(e.clientX, e.clientY);
+}
+
+window.addEventListener("pointerup", soltar);
+window.addEventListener("pointercancel", soltar);
+
+// ---------------------------------------------------------------- ferramentas
+
+ferramentas.addEventListener("click", (e) => {
+  const botao = (e.target as HTMLElement).closest<HTMLButtonElement>("button[data-acao]");
+  const c = colados.find((o) => o.uid === selecionado);
+  if (!botao || !c) return;
+  switch (botao.dataset.acao) {
+    case "espelhar":
+      c.espelhado = !c.espelhado;
+      break;
+    case "menor":
+      c.escala = limitar(c.escala / PASSO_ESCALA, ESCALA_MIN, ESCALA_MAX);
+      break;
+    case "maior":
+      c.escala = limitar(c.escala * PASSO_ESCALA, ESCALA_MIN, ESCALA_MAX);
+      break;
+    case "tras": {
+      const menor = colados.reduce((m, o) => Math.min(m, o.z), Infinity);
+      c.z = menor - 1;
+      // Normaliza para manter os z positivos e pequenos.
+      [...colados].sort((a, b) => a.z - b.z).forEach((o, i) => {
+        o.z = i + 1;
+        desenhar(o);
+      });
+      break;
+    }
+    case "tirar":
+      descolar(c.uid);
+      return;
+  }
+  desenhar(c);
+  guardar();
+});
+
+// ---------------------------------------------------------------- fases
+
+function montarAbas() {
+  elFases.replaceChildren(
+    ...manifest.fases.map((f, i) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "fita";
+      b.setAttribute("role", "tab");
+      b.dataset.fase = f.id;
+      b.innerHTML = `<b>Fase ${i + 1}</b><small></small>`;
+      b.querySelector("small")!.textContent = f.nome;
+      b.addEventListener("click", () => abrirFase(f.id));
+      return b;
+    }),
+  );
+}
+
+function montarPaleta() {
+  trilho.replaceChildren(
+    ...fase.adesivos.map((a) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "figurinha";
+      b.dataset.aid = a.id;
+      b.setAttribute("aria-label", "Colar adesivo");
+      const img = document.createElement("img");
+      img.src = a.src;
+      img.alt = "";
+      img.draggable = false;
+      img.loading = "lazy";
+      b.append(img);
+      return b;
+    }),
+  );
+  trilho.scrollLeft = 0;
+}
+
+async function abrirFase(id: string) {
+  const nova = manifest.fases.find((f) => f.id === id) ?? manifest.fases[0];
+  if (fase && nova.id === fase.id) return;
+  if (fase) salvarAgora();
+
+  arrasto = null;
+  pinca = null;
+  candidato = null;
+  palco.classList.remove("arrastando");
+  fase = nova;
+  porId = new Map(fase.adesivos.map((a) => [a.id, a]));
+  salvarFase(fase.id);
+
+  for (const b of elFases.querySelectorAll<HTMLElement>(".fita")) {
+    const ativa = b.dataset.fase === fase.id;
+    b.setAttribute("aria-selected", String(ativa));
+    if (ativa) b.scrollIntoView({ inline: "nearest", block: "nearest" });
+  }
+
+  imgComodo.src = fase.comodo.src;
+  imgComodo.width = fase.comodo.w;
+  imgComodo.height = fase.comodo.h;
+  ajustarMundo();
+
+  camadaColados.replaceChildren();
+  elementos.clear();
+  selecionado = null;
+  ferramentas.hidden = true;
+  colados = cenaSalva(fase.id).filter((c) => porId.has(c.aid));
+  colados.forEach(criarElemento);
+  atualizarDica();
+  montarPaleta();
+
+  // Máscaras de transparência para o toque preciso.
+  fase.adesivos.forEach((a) => carregar(a.src).catch(() => undefined));
+}
+
+// ---------------------------------------------------------------- topo
+
+$("btn-limpar").addEventListener("click", () => {
+  if (!colados.length) {
+    aviso("Este cômodo já está vazio");
+    return;
+  }
+  dialogoLimpar.returnValue = "";
+  dialogoLimpar.showModal();
+});
+
+dialogoLimpar.addEventListener("close", () => {
+  if (dialogoLimpar.returnValue !== "sim") return;
+  colados = [];
+  camadaColados.replaceChildren();
+  elementos.clear();
+  selecionar(null);
+  guardar();
+});
+
+$("btn-foto").addEventListener("click", async () => {
+  selecionar(null);
+  try {
+    const r = await salvarFoto(fase, colados, porId);
+    if (r === "baixada") aviso("Foto salva");
+  } catch {
+    aviso("Não deu para gerar a foto agora");
+  }
+});
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") salvarAgora();
+});
+
+// Bloqueia o zoom por gesto do iOS, que ignora user-scalable.
+document.addEventListener("gesturestart", (e) => e.preventDefault());
+document.addEventListener("contextmenu", (e) => e.preventDefault());
+
+// ---------------------------------------------------------------- início
+
+async function iniciar() {
+  try {
+    const resposta = await fetch("fases/manifest.json", { cache: "no-cache" });
+    if (!resposta.ok) throw new Error(String(resposta.status));
+    manifest = (await resposta.json()) as Manifest;
+    if (!manifest.fases.length) throw new Error("sem fases");
+  } catch {
+    document.getElementById("app")!.innerHTML =
+      '<p class="erro">Não encontrei as fases. Confira se há imagens na pasta <b>folhas/</b> e rode o recorte de novo.</p>';
+    return;
+  }
+  montarAbas();
+  await abrirFase(faseSalva() ?? manifest.fases[0].id);
+}
+
+iniciar();

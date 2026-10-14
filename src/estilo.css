@@ -1,0 +1,514 @@
+:root {
+  color-scheme: light;
+  --papel: #fff6f8;
+  --grade: #f8dfe8;
+  --tinta: #5e4a63;
+  --tinta-suave: #8f7b94;
+  --morango: #ee7fa6;
+  --morango-claro: #fbd3e1;
+  --menta: #cfebdd;
+  --lilas: #e4dcf5;
+  --branco: #ffffff;
+  --sombra-adesivo: 0 2px 3px rgb(94 74 99 / 0.22);
+  --fonte-mao: "Gaegu", "Comic Sans MS", cursive;
+  --fonte: "Mali", ui-rounded, system-ui, sans-serif;
+  --paleta-altura: 172px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+  background: var(--papel);
+  color: var(--tinta);
+  font-family: var(--fonte);
+  -webkit-tap-highlight-color: transparent;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+img {
+  -webkit-user-drag: none;
+  -webkit-touch-callout: none;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+button:focus-visible {
+  outline: 2.5px solid var(--morango);
+  outline-offset: 2px;
+}
+
+#app {
+  height: 100dvh;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
+  padding-top: env(safe-area-inset-top);
+  background-color: var(--papel);
+  background-image:
+    linear-gradient(var(--grade) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grade) 1px, transparent 1px);
+  background-size: 22px 22px;
+  background-position: -1px -1px;
+}
+
+/* ---------- Topo: fases como fitas washi ---------- */
+
+.topo {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 12px 4px;
+}
+
+.fases {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 6px 4px 8px;
+}
+
+.fases::-webkit-scrollbar {
+  display: none;
+}
+
+.fita {
+  --cor: var(--lilas);
+  flex: 1 1 auto;
+  min-width: 76px;
+  max-width: 140px;
+  position: relative;
+  border: 0;
+  padding: 5px 12px 6px;
+  min-height: 44px;
+  background:
+    repeating-linear-gradient(135deg, rgb(255 255 255 / 0.35) 0 4px, transparent 4px 9px),
+    var(--cor);
+  opacity: 0.88;
+  clip-path: polygon(0 8%, 4% 0, 2% 22%, 5% 40%, 1% 58%, 4% 78%, 0 100%, 100% 92%, 96% 100%, 98% 76%, 95% 56%, 99% 38%, 96% 18%, 100% 0);
+  transform: rotate(var(--giro, -1.2deg));
+  text-align: left;
+  line-height: 1;
+  transition: transform 160ms ease, opacity 160ms ease;
+}
+
+.fita:nth-child(4n + 2) {
+  --cor: var(--menta);
+  --giro: 1deg;
+}
+.fita:nth-child(4n + 3) {
+  --cor: #fde3c8;
+  --giro: -0.6deg;
+}
+.fita:nth-child(4n + 4) {
+  --cor: #d8ecf8;
+  --giro: 1.4deg;
+}
+
+.fita b {
+  display: block;
+  font-family: var(--fonte-mao);
+  font-weight: 700;
+  font-size: 1.3rem;
+}
+
+.fita small {
+  display: block;
+  margin-top: 1px;
+  font-size: 0.68rem;
+  font-weight: 500;
+  color: var(--tinta-suave);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 380px) {
+  .topo {
+    padding-inline: 6px;
+  }
+  .fita {
+    padding-inline: 9px;
+  }
+  .fita b {
+    font-size: 1.15rem;
+  }
+  .fita small {
+    font-size: 0.6rem;
+  }
+}
+
+.fita[aria-selected="true"] {
+  --cor: var(--morango-claro);
+  opacity: 1;
+  transform: rotate(0deg) translateY(-2px) scale(1.04);
+}
+
+.fita[aria-selected="true"] b {
+  color: #c4467a;
+}
+
+.acoes {
+  position: absolute;
+  top: 4px;
+  right: 8px;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.icone {
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 50%;
+  background: rgb(255 255 255 / 0.75);
+  display: grid;
+  place-items: center;
+}
+
+.icone:active {
+  background: var(--morango-claro);
+}
+
+svg {
+  width: 24px;
+  height: 24px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* ---------- Palco ---------- */
+
+.palco {
+  position: relative;
+  z-index: 1;
+  overflow: hidden;
+  touch-action: none;
+  min-height: 0;
+}
+
+/* Durante um arrasto o adesivo pode passar por cima do topo e da cartela. */
+.palco.arrastando {
+  overflow: visible;
+  z-index: 3;
+}
+
+.mundo {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+}
+
+.comodo {
+  display: block;
+  pointer-events: none;
+}
+
+.colados {
+  position: absolute;
+  inset: 0;
+  isolation: isolate;
+}
+
+.colado {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+  --x: 0;
+  --y: 0;
+  --s: 1;
+  --fx: 1;
+  --lift: 1;
+  transform: translate3d(calc(var(--x) * 1px - 50%), calc(var(--y) * 1px - 50%), 0)
+    scale(calc(var(--s) * var(--lift) * var(--fx)), calc(var(--s) * var(--lift)));
+  transition: filter 140ms ease;
+}
+
+.colado img {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* Enquanto está no dedo: borda branca de adesivo descolado e sombra. */
+.colado.segurando {
+  --lift: 1.07;
+  filter: drop-shadow(1.5px 0 0 #fff) drop-shadow(-1.5px 0 0 #fff) drop-shadow(0 1.5px 0 #fff)
+    drop-shadow(0 -1.5px 0 #fff) drop-shadow(0 8px 6px rgb(94 74 99 / 0.28));
+}
+
+.colado.selecionado:not(.segurando) {
+  filter: drop-shadow(1.5px 0 0 var(--morango)) drop-shadow(-1.5px 0 0 var(--morango))
+    drop-shadow(0 1.5px 0 var(--morango)) drop-shadow(0 -1.5px 0 var(--morango));
+}
+
+.colado.saindo {
+  transition: transform 180ms ease-in, opacity 180ms ease-in;
+  --lift: 0.4;
+  opacity: 0;
+}
+
+.dica {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 14px;
+  margin: 0;
+  text-align: center;
+  font-family: var(--fonte-mao);
+  font-size: 1.35rem;
+  line-height: 1.1;
+  color: var(--tinta-suave);
+  pointer-events: none;
+}
+
+/* ---------- Ferramentas do adesivo selecionado ---------- */
+
+.ferramentas {
+  position: absolute;
+  left: 50%;
+  bottom: 10px;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 2px;
+  padding: 5px;
+  background: var(--branco);
+  border: 2px solid var(--tinta);
+  border-radius: 16px;
+  box-shadow: 0 3px 0 var(--tinta);
+  animation: surgir 160ms ease-out;
+}
+
+.ferramentas[hidden],
+.palco.arrastando .ferramentas {
+  display: none;
+}
+
+.ferramentas button {
+  border: 0;
+  background: transparent;
+  border-radius: 11px;
+  min-width: 54px;
+  min-height: 50px;
+  padding: 4px 6px 3px;
+  display: grid;
+  justify-items: center;
+  gap: 1px;
+  font-size: 0.68rem;
+  font-weight: 600;
+}
+
+.ferramentas button:active {
+  background: var(--morango-claro);
+}
+
+.ferramentas button[data-acao="tirar"] {
+  color: #c4467a;
+}
+
+@keyframes surgir {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(6px);
+  }
+}
+
+/* ---------- Paleta: a cartela de adesivos ---------- */
+
+.paleta {
+  position: relative;
+  z-index: 2;
+  margin: 0 10px calc(10px + env(safe-area-inset-bottom));
+  height: var(--paleta-altura);
+  background: var(--branco);
+  border: 2.5px dashed var(--tinta-suave);
+  border-radius: 20px;
+  overflow: hidden;
+}
+
+.paleta-trilho {
+  height: 100%;
+  display: grid;
+  grid-auto-flow: column;
+  grid-template-rows: repeat(2, 1fr);
+  grid-auto-columns: 74px;
+  gap: 4px 6px;
+  padding: 8px 12px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+
+.paleta-trilho::-webkit-scrollbar {
+  display: none;
+}
+
+.figurinha {
+  display: block;
+  overflow: hidden;
+  border: 0;
+  padding: 6px;
+  background: transparent;
+  border-radius: 12px;
+  touch-action: pan-x;
+  min-height: 0;
+}
+
+.figurinha img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+  filter: drop-shadow(1.5px 0 0 #fff) drop-shadow(-1.5px 0 0 #fff) drop-shadow(0 1.5px 0 #fff)
+    drop-shadow(0 -1.5px 0 #fff) drop-shadow(var(--sombra-adesivo));
+}
+
+.figurinha:active img {
+  transform: scale(0.94);
+}
+
+.paleta-soltar {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  display: grid;
+  place-items: center;
+  font-family: var(--fonte-mao);
+  font-weight: 700;
+  font-size: 1.5rem;
+  color: #c4467a;
+  background: rgb(251 211 225 / 0.92);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 140ms ease;
+}
+
+.paleta.alvo .paleta-soltar {
+  opacity: 1;
+}
+
+.paleta.alvo {
+  border-color: var(--morango);
+}
+
+/* ---------- Diálogo ---------- */
+
+.dialogo {
+  border: 2px solid var(--tinta);
+  border-radius: 20px;
+  box-shadow: 0 4px 0 var(--tinta);
+  padding: 20px 18px 16px;
+  max-width: min(340px, calc(100vw - 32px));
+  color: var(--tinta);
+  background: var(--branco);
+}
+
+.dialogo::backdrop {
+  background: rgb(94 74 99 / 0.35);
+}
+
+.dialogo p {
+  margin: 0 0 16px;
+  font-family: var(--fonte-mao);
+  font-size: 1.45rem;
+  line-height: 1.15;
+}
+
+.dialogo-botoes {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.dialogo-botoes button {
+  min-height: 44px;
+  padding: 0 14px;
+  border-radius: 12px;
+  border: 2px solid var(--tinta);
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.secundario {
+  background: var(--branco);
+}
+
+.primario {
+  background: var(--morango);
+  color: var(--branco);
+}
+
+.aviso {
+  position: fixed;
+  left: 50%;
+  top: calc(70px + env(safe-area-inset-top));
+  transform: translateX(-50%);
+  padding: 8px 16px;
+  border-radius: 14px;
+  background: var(--tinta);
+  color: var(--branco);
+  font-weight: 600;
+  font-size: 0.85rem;
+  pointer-events: none;
+  animation: surgir-aviso 200ms ease-out;
+  z-index: 10;
+}
+
+@keyframes surgir-aviso {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-6px);
+  }
+}
+
+.erro {
+  margin: auto;
+  max-width: 300px;
+  padding: 24px;
+  text-align: center;
+  font-family: var(--fonte-mao);
+  font-size: 1.4rem;
+}
+
+@media (min-height: 760px) {
+  :root {
+    --paleta-altura: 190px;
+  }
+  .paleta-trilho {
+    grid-auto-columns: 82px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
