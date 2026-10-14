@@ -9,7 +9,11 @@ Jogo de decorar cômodos isométricos com adesivos, feito para o celular.
 - Escolha a fase nas fitas lá em cima.
 - Puxe um adesivo da cartela pontilhada para cima e solte no cômodo. Um toque rápido na cartela também cola o adesivo no meio do cômodo.
 - Arraste um adesivo colado para mudar de lugar. Ao segurar, ele vai para a frente dos outros.
-- Com um adesivo selecionado: **Virar** espelha, **Menor**/**Maior** mudam o tamanho (ou faça pinça com dois dedos), **Pra trás** manda para trás dos outros e **Tirar** descola.
+- Com um adesivo selecionado: **Virar** espelha, **Menor**/**Maior** mudam o tamanho, **Pra trás** manda para trás dos outros e **Tirar** descola.
+  Para mudar o tamanho com os dedos, segure o adesivo com um dedo e faça pinça com o segundo.
+- **Zoom:** pinça com dois dedos fora dos adesivos aproxima e afasta; com o cômodo ampliado, arraste o vazio com um dedo para andar pela cena.
+  As lupas no canto esquerdo fazem o mesmo (aproximam no adesivo selecionado) e o botão de moldura volta a mostrar o cômodo inteiro.
+  Segurando um adesivo perto da borda com zoom, a cena vai andando junto.
 - Arrastar um adesivo de volta para a cartela também descola.
 - A câmera salva uma foto do cômodo; a lixeira limpa o cômodo.
 - Tudo fica salvo no navegador do celular.
@@ -37,7 +41,10 @@ imagem com as caixas numeradas de cada peça para ajudar.
   "unir": [[400, 540, 270, 230]],
   "fechar": [[455, 455, 140, 130, 5]],
   "remover": [[123, 264]],
+  "separar": [[0, 1180, 250, 1180, 250, 1308, 0, 1308]],
   "comodo": [100, 400, 520, 560],
+  "fundoFixo": true,
+  "bordaFecha": ["cima"],
   "tolerancia": 30,
   "juntarAte": 3,
   "areaMinima": 120
@@ -51,7 +58,10 @@ imagem com as caixas numeradas de cada peça para ajudar.
 | `unir` | Junta numa peça só tudo que tem o centro dentro do retângulo. |
 | `fechar` | Para desenhos de contorno aberto ou muito claros: junta e preenche o miolo. O 5º número é a força. |
 | `remover` | Tira a peça que contém o ponto `[x, y]`. |
+| `separar` | Separa itens que se encostam: cada polígono `[x1, y1, x2, y2, …]` vira uma peça própria. |
 | `comodo` | Indica onde está o cômodo, se a maior peça não for ele. |
+| `fundoFixo` | Para fundo branco liso com traço claro: evita que o recorte "coma" partes claras dos desenhos. |
+| `bordaFecha` | Bordas da imagem (`cima`, `baixo`, `esquerda`, `direita`) que contam como parede ao usar `fechar`, para cômodos cortados pela folha. |
 | `tolerancia` | Quanto a cor pode variar e ainda contar como fundo (padrão 30). |
 | `juntarAte` | Distância em px para juntar partes próximas num adesivo só (padrão 3). Diminua se dois itens grudarem. |
 | `areaMinima` | Tamanho mínimo para virar adesivo (padrão 120 px). |

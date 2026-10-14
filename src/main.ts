@@ -20,6 +20,14 @@ const ferramentas = $("ferramentas");
 const paleta = $("paleta");
 const trilho = $("paleta-trilho");
 const dialogoLimpar = $<HTMLDialogElement>("dialogo-limpar");
+const btnAproximar = $<HTMLButtonElement>("btn-aproximar");
+const btnAfastar = $<HTMLButtonElement>("btn-afastar");
+const btnVerTudo = $<HTMLButtonElement>("btn-ver-tudo");
+
+const ZOOM_MAX = 4;
+const PASSO_ZOOM = 1.5;
+/** Faixa perto da borda do palco que puxa a vista ao arrastar um adesivo com zoom. */
+const BORDA_ROLAGEM = 36;
 
 const ESCALA_MIN = 0.35;
 const ESCALA_MAX = 3;
@@ -38,6 +46,9 @@ let selecionado: string | null = null;
 let escalaMundo = 1;
 let origemX = 0;
 let origemY = 0;
+/** Vista sem zoom: o cômodo inteiro cabendo no palco. */
+const base = { s: 1, x: 0, y: 0 };
+let zoom = 1;
 
 // ---------------------------------------------------------------- utilidades
 
@@ -72,30 +83,78 @@ function guardar() {
 
 // ---------------------------------------------------------------- palco
 
+/** Área do mundo visível sem zoom. A vista ampliada nunca sai dela. */
+function areaBase() {
+  return {
+    minX: -base.x / base.s,
+    minY: -base.y / base.s,
+    maxX: (palco.clientWidth - base.x) / base.s,
+    maxY: (palco.clientHeight - base.y) / base.s,
+  };
+}
+
+function aplicarVista() {
+  const a = areaBase();
+  origemX = limitar(origemX, palco.clientWidth - a.maxX * escalaMundo, -a.minX * escalaMundo);
+  origemY = limitar(origemY, palco.clientHeight - a.maxY * escalaMundo, -a.minY * escalaMundo);
+  mundo.style.transform = `translate(${origemX}px, ${origemY}px) scale(${escalaMundo})`;
+  const ampliado = zoom > 1.001;
+  palco.classList.toggle("ampliado", ampliado);
+  btnVerTudo.hidden = !ampliado;
+  btnAfastar.disabled = !ampliado;
+  btnAproximar.disabled = zoom >= ZOOM_MAX - 0.001;
+}
+
+/** Aproxima ou afasta mantendo parado o ponto (sx, sy) do palco. */
+function zoomEm(sx: number, sy: number, novoZoom: number) {
+  const wx = (sx - origemX) / escalaMundo;
+  const wy = (sy - origemY) / escalaMundo;
+  zoom = limitar(novoZoom, 1, ZOOM_MAX);
+  escalaMundo = base.s * zoom;
+  origemX = sx - wx * escalaMundo;
+  origemY = sy - wy * escalaMundo;
+  aplicarVista();
+}
+
+function verTudo() {
+  zoom = 1;
+  escalaMundo = base.s;
+  origemX = base.x;
+  origemY = base.y;
+  aplicarVista();
+}
+
 function ajustarMundo() {
   if (!fase) return;
   const { w, h } = fase.comodo;
   const pw = palco.clientWidth;
   const ph = palco.clientHeight;
+  // Ponto do mundo no centro da tela, para não perder o lugar quando a barra do navegador some ou aparece.
+  const centroX = (pw / 2 - origemX) / escalaMundo;
+  const centroY = (ph / 2 - origemY) / escalaMundo;
   const margem = Math.min(16, pw * 0.04);
-  escalaMundo = Math.max(0.1, Math.min((pw - margem * 2) / w, (ph - margem * 2) / h));
-  origemX = (pw - w * escalaMundo) / 2;
-  origemY = (ph - h * escalaMundo) / 2;
+  base.s = Math.max(0.1, Math.min((pw - margem * 2) / w, (ph - margem * 2) / h));
+  base.x = (pw - w * base.s) / 2;
+  base.y = (ph - h * base.s) / 2;
   mundo.style.width = `${w}px`;
   mundo.style.height = `${h}px`;
-  mundo.style.transform = `translate(${origemX}px, ${origemY}px) scale(${escalaMundo})`;
+  if (zoom <= 1.001) {
+    verTudo();
+    return;
+  }
+  escalaMundo = base.s * zoom;
+  origemX = pw / 2 - centroX * escalaMundo;
+  origemY = ph / 2 - centroY * escalaMundo;
+  aplicarVista();
 }
 
 new ResizeObserver(ajustarMundo).observe(palco);
 
-/** Mantém o centro do adesivo dentro da área visível do palco. */
+/** Mantém o centro do adesivo dentro do palco (na vista sem zoom). */
 function prenderNaTela(c: Colado) {
-  const minX = -origemX / escalaMundo;
-  const minY = -origemY / escalaMundo;
-  const maxX = (palco.clientWidth - origemX) / escalaMundo;
-  const maxY = (palco.clientHeight - origemY) / escalaMundo;
-  c.x = limitar(c.x, minX + 6, maxX - 6);
-  c.y = limitar(c.y, minY + 6, maxY - 6);
+  const a = areaBase();
+  c.x = limitar(c.x, a.minX + 6, a.maxX - 6);
+  c.y = limitar(c.y, a.minY + 6, a.maxY - 6);
 }
 
 // ---------------------------------------------------------------- adesivos colados
@@ -209,14 +268,67 @@ interface Candidato {
   y0: number;
 }
 
+/** Um dedo no vazio: toque desmarca; com zoom, arrastar move a vista. */
+interface Vazio {
+  pid: number;
+  x0: number;
+  y0: number;
+  ox0: number;
+  oy0: number;
+  moveu: boolean;
+}
+
+/** Dois dedos fora de um adesivo: pinça aproxima/afasta e arrastar move a vista. */
+interface PincaVista {
+  dist0: number;
+  zoom0: number;
+  wx: number;
+  wy: number;
+}
+
 const dedos = new Map<number, { x: number; y: number }>();
 let arrasto: Arrasto | null = null;
 let pinca: Pinca | null = null;
 let candidato: Candidato | null = null;
+let vazio: Vazio | null = null;
+let pincaVista: PincaVista | null = null;
+let ultimoPonteiro = { x: 0, y: 0 };
+let rolagem = 0;
 
 function distanciaDedos() {
   const [a, b] = [...dedos.values()];
   return Math.hypot(a.x - b.x, a.y - b.y) || 1;
+}
+
+/** Ponto médio dos dois dedos, em coordenadas do palco. */
+function meioDedos() {
+  const [a, b] = [...dedos.values()];
+  const r = palco.getBoundingClientRect();
+  return { x: (a.x + b.x) / 2 - r.left, y: (a.y + b.y) / 2 - r.top };
+}
+
+/** Com zoom, segurar um adesivo perto da borda do palco vai revelando o resto do cômodo. */
+function rolarNaBorda() {
+  rolagem = 0;
+  if (!arrasto || zoom <= 1.001) return;
+  const r = palco.getBoundingClientRect();
+  const { x, y } = ultimoPonteiro;
+  if (x < r.left || x > r.right || y < r.top || y > r.bottom) return;
+  const forca = (d: number) => (d < BORDA_ROLAGEM ? ((BORDA_ROLAGEM - d) / BORDA_ROLAGEM) * 9 : 0);
+  const vx = forca(x - r.left) - forca(r.right - x);
+  const vy = forca(y - r.top) - forca(r.bottom - y);
+  if (!vx && !vy) return;
+  const antesX = origemX;
+  const antesY = origemY;
+  origemX += vx;
+  origemY += vy;
+  aplicarVista();
+  if (origemX === antesX && origemY === antesY) return;
+  const p = paraMundo(x, y);
+  arrasto.c.x = p.x + arrasto.dx;
+  arrasto.c.y = p.y + arrasto.dy;
+  desenhar(arrasto.c);
+  rolagem = requestAnimationFrame(rolarNaBorda);
 }
 
 function iniciarArrasto(pid: number, c: Colado, clientX: number, clientY: number, x0 = clientX, y0 = clientY) {
@@ -237,6 +349,8 @@ function moverArrasto(clientX: number, clientY: number) {
   arrasto.c.y = p.y + arrasto.dy;
   desenhar(arrasto.c);
   paleta.classList.toggle("alvo", sobreAPaleta(clientX, clientY));
+  ultimoPonteiro = { x: clientX, y: clientY };
+  if (!rolagem) rolagem = requestAnimationFrame(rolarNaBorda);
 }
 
 function terminarArrasto(clientX: number, clientY: number) {
@@ -246,6 +360,8 @@ function terminarArrasto(clientX: number, clientY: number) {
   paleta.classList.remove("alvo");
   palco.classList.remove("arrastando");
   arrasto = null;
+  cancelAnimationFrame(rolagem);
+  rolagem = 0;
   if (sobreAPaleta(clientX, clientY)) {
     descolar(c.uid);
     return;
@@ -256,27 +372,47 @@ function terminarArrasto(clientX: number, clientY: number) {
 }
 
 palco.addEventListener("pointerdown", (e) => {
-  if ((e.target as HTMLElement).closest(".ferramentas, .acoes")) return;
+  if ((e.target as HTMLElement).closest(".ferramentas, .acoes, .zoom")) return;
   dedos.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
-  if (dedos.size === 2 && selecionado) {
-    // Pinça com dois dedos: muda o tamanho do adesivo selecionado.
-    const c = colados.find((o) => o.uid === selecionado);
-    if (c) {
+  if (dedos.size === 2) {
+    if (arrasto) {
+      // Primeiro dedo em cima de um adesivo: a pinça muda o tamanho dele.
+      const { c } = arrasto;
       pinca = { c, dist0: distanciaDedos(), escala0: c.escala };
-      if (arrasto) elementos.get(arrasto.c.uid)?.classList.remove("segurando");
+      elementos.get(c.uid)?.classList.remove("segurando");
       palco.classList.remove("arrastando");
       arrasto = null;
+    } else {
+      // Pinça no vazio: zoom na vista, sem perder o adesivo selecionado.
+      const m = meioDedos();
+      pincaVista = {
+        dist0: distanciaDedos(),
+        zoom0: zoom,
+        wx: (m.x - origemX) / escalaMundo,
+        wy: (m.y - origemY) / escalaMundo,
+      };
+      vazio = null;
     }
     return;
   }
-  if (dedos.size > 1) return;
+  if (dedos.size > 2) return;
 
   const p = paraMundo(e.clientX, e.clientY);
   const c = adesivoEm(p.x, p.y);
   if (c) iniciarArrasto(e.pointerId, c, e.clientX, e.clientY);
-  else selecionar(null);
+  else vazio = { pid: e.pointerId, x0: e.clientX, y0: e.clientY, ox0: origemX, oy0: origemY, moveu: false };
 });
+
+palco.addEventListener(
+  "wheel",
+  (e) => {
+    e.preventDefault();
+    const r = palco.getBoundingClientRect();
+    zoomEm(e.clientX - r.left, e.clientY - r.top, zoom * Math.exp(-e.deltaY * 0.0015));
+  },
+  { passive: false },
+);
 
 trilho.addEventListener("pointerdown", (e) => {
   const fig = (e.target as HTMLElement).closest<HTMLElement>(".figurinha");
@@ -290,6 +426,28 @@ window.addEventListener("pointermove", (e) => {
   if (pinca && dedos.size >= 2) {
     pinca.c.escala = limitar((pinca.escala0 * distanciaDedos()) / pinca.dist0, ESCALA_MIN, ESCALA_MAX);
     desenhar(pinca.c);
+    return;
+  }
+
+  if (pincaVista && dedos.size >= 2) {
+    const m = meioDedos();
+    zoom = limitar((pincaVista.zoom0 * distanciaDedos()) / pincaVista.dist0, 1, ZOOM_MAX);
+    escalaMundo = base.s * zoom;
+    origemX = m.x - pincaVista.wx * escalaMundo;
+    origemY = m.y - pincaVista.wy * escalaMundo;
+    aplicarVista();
+    return;
+  }
+
+  if (vazio && e.pointerId === vazio.pid) {
+    const dx = e.clientX - vazio.x0;
+    const dy = e.clientY - vazio.y0;
+    if (!vazio.moveu && Math.hypot(dx, dy) >= LIMIAR) vazio.moveu = true;
+    if (vazio.moveu && zoom > 1.001) {
+      origemX = vazio.ox0 + dx;
+      origemY = vazio.oy0 + dy;
+      aplicarVista();
+    }
     return;
   }
 
@@ -320,9 +478,16 @@ function soltar(e: PointerEvent) {
   dedos.delete(e.pointerId);
 
   if (candidato && e.pointerId === candidato.pid) {
-    // Toque simples na cartela: cola no meio do cômodo.
+    // Toque simples na cartela: cola no meio do que está à vista.
     if (e.type === "pointerup") {
-      const c = colar(candidato.aid, fase.comodo.w / 2 + (Math.random() - 0.5) * 40, fase.comodo.h * 0.6 + (Math.random() - 0.5) * 30);
+      let x = fase.comodo.w / 2;
+      let y = fase.comodo.h * 0.6;
+      if (zoom > 1.001) {
+        const r = palco.getBoundingClientRect();
+        ({ x, y } = paraMundo(r.left + r.width / 2, r.top + r.height / 2));
+      }
+      const espalhar = 40 / zoom;
+      const c = colar(candidato.aid, x + (Math.random() - 0.5) * espalhar, y + (Math.random() - 0.5) * espalhar * 0.75);
       selecionar(c.uid);
       guardar();
     }
@@ -335,6 +500,17 @@ function soltar(e: PointerEvent) {
       guardar();
       pinca = null;
     }
+    return;
+  }
+
+  if (pincaVista) {
+    if (dedos.size < 2) pincaVista = null;
+    return;
+  }
+
+  if (vazio && e.pointerId === vazio.pid) {
+    if (!vazio.moveu && e.type === "pointerup") selecionar(null);
+    vazio = null;
     return;
   }
 
@@ -424,8 +600,11 @@ async function abrirFase(id: string) {
   arrasto = null;
   pinca = null;
   candidato = null;
+  vazio = null;
+  pincaVista = null;
   palco.classList.remove("arrastando");
   fase = nova;
+  zoom = 1;
   porId = new Map(fase.adesivos.map((a) => [a.id, a]));
   salvarFase(fase.id);
 
@@ -452,6 +631,22 @@ async function abrirFase(id: string) {
   // Máscaras de transparência para o toque preciso.
   fase.adesivos.forEach((a) => carregar(a.src).catch(() => undefined));
 }
+
+// ---------------------------------------------------------------- zoom
+
+/** Os botões aproximam no adesivo selecionado (se estiver à vista) ou no centro do palco. */
+function focoDoZoom() {
+  const c = colados.find((o) => o.uid === selecionado);
+  if (c) {
+    const sx = origemX + c.x * escalaMundo;
+    const sy = origemY + c.y * escalaMundo;
+    if (sx >= 0 && sy >= 0 && sx <= palco.clientWidth && sy <= palco.clientHeight) return [sx, sy] as const;
+  }
+  return [palco.clientWidth / 2, palco.clientHeight / 2] as const;
+}
+btnAproximar.addEventListener("click", () => zoomEm(...focoDoZoom(), zoom * PASSO_ZOOM));
+btnAfastar.addEventListener("click", () => zoomEm(...focoDoZoom(), zoom / PASSO_ZOOM));
+btnVerTudo.addEventListener("click", verTudo);
 
 // ---------------------------------------------------------------- topo
 

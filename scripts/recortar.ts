@@ -30,6 +30,16 @@ interface ConfigFolha {
    * O 5º número opcional é o raio de fechamento (padrão 4).
    */
   fechar?: [x: number, y: number, w: number, h: number, raio?: number][];
+  /**
+   * Bordas da imagem que contam como parede ao fechar (para cômodos cortados pela folha).
+   * Ex.: ["cima"] quando o topo do cômodo encosta no topo da imagem.
+   */
+  bordaFecha?: ("cima" | "baixo" | "esquerda" | "direita")[];
+  /**
+   * Separa itens que se encostam: cada polígono [x1, y1, x2, y2, …] vira uma peça própria
+   * com tudo o que estiver dentro dele.
+   */
+  separar?: number[][];
   /** Remove a peça que contém cada ponto [x, y] (repetidos, enfeites da folha…). */
   remover?: [x: number, y: number][];
   /** Força a região do cômodo, caso a maior peça não seja ele. */
@@ -38,6 +48,11 @@ interface ConfigFolha {
   tolerancia?: number;
   /** Distância em px para considerar duas partes como o mesmo adesivo (padrão 3). */
   juntarAte?: number;
+  /**
+   * Fundo de cor única (branco liso): a referência de cor não acompanha degradês.
+   * Use em folhas com traço borrado, onde o recorte "come" peças claras.
+   */
+  fundoFixo?: boolean;
   /** Área mínima em px para virar adesivo (padrão 120). */
   areaMinima?: number;
 }
@@ -88,6 +103,7 @@ async function recortarFolha(arquivo: string): Promise<FaseManifest> {
 
   const tolerancia = config.tolerancia ?? 30;
   const juntarAte = config.juntarAte ?? 3;
+  const fundoFixo = config.fundoFixo ?? false;
   const areaMinima = config.areaMinima ?? 120;
 
   const { data: px, info } = await sharp(caminho)
@@ -150,13 +166,15 @@ async function recortarFolha(arquivo: string): Promise<FaseManifest> {
       const g = px[j * 4 + 1];
       const b = px[j * 4 + 2];
       const pertoRef = dist(r, g, b, rr, rg, rb) <= tolerancia;
-      const passoSuave = dist(r, g, b, pr, pg, pb) <= tolerancia * 0.5 && dist(r, g, b, rr, rg, rb) <= tolerancia * 1.6;
+      const passoSuave =
+        !fundoFixo && dist(r, g, b, pr, pg, pb) <= tolerancia * 0.5 && dist(r, g, b, rr, rg, rb) <= tolerancia * 1.6;
       const viraNeutro = neutroClaro(r, g, b) && neutroClaro(pr, pg, pb);
       if (pertoRef || passoSuave || viraNeutro) {
         fundo[j] = 1;
-        ref[j * 3] = rr * 0.85 + r * 0.15;
-        ref[j * 3 + 1] = rg * 0.85 + g * 0.15;
-        ref[j * 3 + 2] = rb * 0.85 + b * 0.15;
+        const peso = fundoFixo ? 0 : 0.15;
+        ref[j * 3] = rr * (1 - peso) + r * peso;
+        ref[j * 3 + 1] = rg * (1 - peso) + g * peso;
+        ref[j * 3 + 2] = rb * (1 - peso) + b * peso;
         fila[fim++] = j;
       }
     }
@@ -202,6 +220,31 @@ async function recortarFolha(arquivo: string): Promise<FaseManifest> {
     }
     pecas.push(peca);
   }
+  // Separações manuais por polígono.
+  const tocadas = new Set<Peca>();
+  for (const poligono of config.separar ?? []) {
+    const nova: Peca = { minX: W, minY: H, maxX: 0, maxY: 0, pixels: [] };
+    for (const p of pecas) {
+      const ficam: number[] = [];
+      for (const i of p.pixels) {
+        if (dentroDoPoligono((i % W) + 0.5, ((i / W) | 0) + 0.5, poligono)) nova.pixels.push(i);
+        else ficam.push(i);
+      }
+      if (ficam.length !== p.pixels.length) {
+        recalcularCaixa(p, ficam, W);
+        tocadas.add(p);
+      }
+    }
+    pecas = pecas.filter((p) => p.pixels.length > 0);
+    if (nova.pixels.length) {
+      recalcularCaixa(nova, nova.pixels, W);
+      pecas.push(nova);
+      tocadas.add(nova);
+    }
+  }
+  // O corte deixa lascas soltas da peça vizinha; tira os fragmentos pequenos.
+  for (const p of tocadas) if (p.pixels.length) removerLascas(p, W, H);
+
   // Remoções manuais.
   for (const [rx, ry] of config.remover ?? []) {
     const alvo = pecas
@@ -232,7 +275,7 @@ async function recortarFolha(arquivo: string): Promise<FaseManifest> {
   for (const r of config.unir ?? []) unirNoRetangulo(r);
   for (const [fx, fy, fw, fh, raio] of config.fechar ?? []) {
     const peca = unirNoRetangulo([fx, fy, fw, fh]);
-    if (peca) fecharContorno(peca, W, H, raio ?? 4);
+    if (peca) fecharContorno(peca, W, H, raio ?? 4, config.bordaFecha ?? []);
   }
   // Fragmentos pequenos (sujeira, traços soltos) só entram se foram unidos a algo acima.
   pecas = pecas.filter((p) => p.pixels.length >= areaMinima);
@@ -369,8 +412,67 @@ function dilatar(m: Uint8Array, W: number, H: number, r: number) {
   return out;
 }
 
+function dentroDoPoligono(x: number, y: number, pts: number[]) {
+  let dentro = false;
+  for (let i = 0, j = pts.length - 2; i < pts.length; j = i, i += 2) {
+    const xi = pts[i];
+    const yi = pts[i + 1];
+    const xj = pts[j];
+    const yj = pts[j + 1];
+    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) dentro = !dentro;
+  }
+  return dentro;
+}
+
+/** Mantém só os pedaços conectados que têm pelo menos 6% do tamanho do maior. */
+function removerLascas(p: Peca, W: number, H: number) {
+  const marca = new Set(p.pixels);
+  const visto = new Set<number>();
+  const grupos: number[][] = [];
+  for (const s of p.pixels) {
+    if (visto.has(s)) continue;
+    const grupo: number[] = [];
+    const pilha = [s];
+    visto.add(s);
+    while (pilha.length) {
+      const i = pilha.pop()!;
+      grupo.push(i);
+      const x = i % W;
+      const y = (i / W) | 0;
+      for (let dy = -1; dy <= 1; dy++)
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+          const j = ny * W + nx;
+          if (marca.has(j) && !visto.has(j)) {
+            visto.add(j);
+            pilha.push(j);
+          }
+        }
+    }
+    grupos.push(grupo);
+  }
+  const maior = Math.max(...grupos.map((g) => g.length));
+  recalcularCaixa(p, grupos.filter((g) => g.length >= maior * 0.06).flat(), W);
+}
+
+function recalcularCaixa(p: Peca, pixels: number[], W: number) {
+  p.pixels = pixels;
+  p.minX = p.minY = Infinity;
+  p.maxX = p.maxY = -Infinity;
+  for (const i of pixels) {
+    const x = i % W;
+    const y = (i / W) | 0;
+    if (x < p.minX) p.minX = x;
+    if (y < p.minY) p.minY = y;
+    if (x > p.maxX) p.maxX = x;
+    if (y > p.maxY) p.maxY = y;
+  }
+}
+
 /** Fecha contornos abertos dentro da caixa da peça. */
-function fecharContorno(p: Peca, W: number, H: number, raio: number) {
+function fecharContorno(p: Peca, W: number, H: number, raio: number, bordaFecha: NonNullable<ConfigFolha["bordaFecha"]>) {
   const x0 = Math.max(0, p.minX - raio - 1);
   const y0 = Math.max(0, p.minY - raio - 1);
   const x1 = Math.min(W - 1, p.maxX + raio + 1);
@@ -387,7 +489,7 @@ function fecharContorno(p: Peca, W: number, H: number, raio: number) {
   const dil = dilatar(local, w, h, raio);
   const global = new Uint8Array(W * H);
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (dil[y * w + x]) global[(y + y0) * W + x + x0] = 1;
-  preencherBuracos(global, W, H, x0, y0, x1, y1);
+  preencherBuracos(global, W, H, x0, y0, x1, y1, bordaFecha);
   const inv = new Uint8Array(w * h);
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) inv[y * w + x] = global[(y + y0) * W + x + x0] ? 0 : 1;
   const ero = dilatar(inv, w, h, raio);
@@ -408,7 +510,16 @@ function fecharContorno(p: Peca, W: number, H: number, raio: number) {
 }
 
 /** Marca como sólido tudo que não é alcançável a partir da borda da caixa (buracos internos). */
-function preencherBuracos(m: Uint8Array, W: number, _H: number, x0: number, y0: number, x1: number, y1: number) {
+function preencherBuracos(
+  m: Uint8Array,
+  W: number,
+  H: number,
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+  bordaFecha: NonNullable<ConfigFolha["bordaFecha"]> = [],
+) {
   const w = x1 - x0 + 1;
   const h = y1 - y0 + 1;
   const fora = new Uint8Array(w * h);
@@ -419,13 +530,18 @@ function preencherBuracos(m: Uint8Array, W: number, _H: number, x0: number, y0: 
     fora[k] = 1;
     fila.push(k);
   };
+  // Uma borda da caixa que coincide com uma borda da imagem marcada em `bordaFecha` não deixa o "fora" entrar.
+  const cima = y0 === 0 && bordaFecha.includes("cima");
+  const baixo = y1 === H - 1 && bordaFecha.includes("baixo");
+  const esquerda = x0 === 0 && bordaFecha.includes("esquerda");
+  const direita = x1 === W - 1 && bordaFecha.includes("direita");
   for (let x = 0; x < w; x++) {
-    tentar(x, 0);
-    tentar(x, h - 1);
+    if (!cima) tentar(x, 0);
+    if (!baixo) tentar(x, h - 1);
   }
   for (let y = 0; y < h; y++) {
-    tentar(0, y);
-    tentar(w - 1, y);
+    if (!esquerda) tentar(0, y);
+    if (!direita) tentar(w - 1, y);
   }
   while (fila.length) {
     const k = fila.pop()!;

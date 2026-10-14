@@ -28,6 +28,17 @@
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M10 7V5.2c0-.7.5-1.2 1.2-1.2h1.6c.7 0 1.2.5 1.2 1.2V7M6.5 7l.8 11.3c.1 1 .9 1.7 1.9 1.7h5.6c1 0 1.8-.7 1.9-1.7L17.5 7M10.2 10.5v6M13.8 10.5v6"/></svg>
           </button>
         </div>
+        <div class="zoom" role="group" aria-label="Zoom do cômodo">
+          <button id="btn-aproximar" class="icone" type="button" aria-label="Aproximar">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M8 11h6M11 8v6M16 16l4 4"/></svg>
+          </button>
+          <button id="btn-afastar" class="icone" type="button" aria-label="Afastar">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M8 11h6M16 16l4 4"/></svg>
+          </button>
+          <button id="btn-ver-tudo" class="icone" type="button" aria-label="Ver o cômodo inteiro" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V5.5C4 4.7 4.7 4 5.5 4H9M15 4h3.5c.8 0 1.5.7 1.5 1.5V9M20 15v3.5c0 .8-.7 1.5-1.5 1.5H15M9 20H5.5C4.7 20 4 19.3 4 18.5V15"/></svg>
+          </button>
+        </div>
         <div id="mundo" class="mundo">
           <img id="comodo" class="comodo" alt="" draggable="false" />
           <div id="colados" class="colados"></div>
@@ -39,11 +50,11 @@
             Virar
           </button>
           <button type="button" data-acao="menor">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M8 11h6M16 16l4 4"/></svg>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4l5.5 5.5M9.5 5v4.5H5M20 20l-5.5-5.5M14.5 19v-4.5H19"/></svg>
             Menor
           </button>
           <button type="button" data-acao="maior">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M8 11h6M11 8v6M16 16l4 4"/></svg>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 9.5 4 4M4 8.5V4h4.5M14.5 14.5 20 20M20 15.5V20h-4.5"/></svg>
             Maior
           </button>
           <button type="button" data-acao="tras">

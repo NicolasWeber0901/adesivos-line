@@ -89,9 +89,8 @@ button:focus-visible {
 
 .fita {
   --cor: var(--lilas);
-  flex: 1 1 auto;
-  min-width: 76px;
-  max-width: 140px;
+  flex: none;
+  max-width: 132px;
   position: relative;
   border: 0;
   padding: 5px 12px 6px;
@@ -122,6 +121,7 @@ button:focus-visible {
 
 .fita b {
   display: block;
+  white-space: nowrap;
   font-family: var(--fonte-mao);
   font-weight: 700;
   font-size: 1.3rem;
@@ -173,6 +173,26 @@ button:focus-visible {
   gap: 6px;
 }
 
+.zoom {
+  position: absolute;
+  top: 4px;
+  left: 8px;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.zoom [hidden] {
+  display: none;
+}
+
+.palco.arrastando .zoom,
+.palco.arrastando .acoes {
+  opacity: 0.35;
+  pointer-events: none;
+}
+
 .icone {
   width: 44px;
   height: 44px;
@@ -181,6 +201,11 @@ button:focus-visible {
   background: rgb(255 255 255 / 0.75);
   display: grid;
   place-items: center;
+}
+
+.icone:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 
 .icone:active {
@@ -207,14 +232,16 @@ svg {
   min-height: 0;
 }
 
-/* Durante um arrasto o adesivo pode passar por cima do topo e da cartela. */
-.palco.arrastando {
+/* Durante um arrasto o adesivo pode passar por cima do topo e da cartela
+   (só sem zoom: ampliado, o cômodo vazaria para fora do palco). */
+.palco.arrastando:not(.ampliado) {
   overflow: visible;
   z-index: 3;
 }
 
 .mundo {
   position: absolute;
+  will-change: transform;
   left: 0;
   top: 0;
   transform-origin: 0 0;

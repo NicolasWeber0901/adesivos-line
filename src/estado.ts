@@ -1,6 +1,9 @@
 import type { Colado } from "./tipos.ts";
 
-/** Tudo fica salvo no próprio navegador do celular. */
+/**
+ * Tudo fica salvo no próprio navegador do celular.
+ * O formato desta chave não pode mudar: é onde estão os cômodos que ela já decorou.
+ */
 const CHAVE = "adesivos-line:v1";
 
 interface Salvo {
@@ -8,46 +11,63 @@ interface Salvo {
   cenas: Record<string, Colado[]>;
 }
 
-function ler(): Salvo {
+function ler(): Salvo | null {
   try {
     const bruto = localStorage.getItem(CHAVE);
-    if (bruto) {
-      const dados = JSON.parse(bruto) as Salvo;
-      if (dados && typeof dados === "object" && dados.cenas) return dados;
-    }
+    if (!bruto) return { cenas: {} };
+    const dados = JSON.parse(bruto) as Salvo;
+    if (dados && typeof dados === "object" && dados.cenas && typeof dados.cenas === "object") return dados;
+    return null;
   } catch {
-    /* sem armazenamento (aba anônima etc.): o jogo funciona, só não lembra */
+    return null;
   }
-  return { cenas: {} };
 }
 
-let salvo = ler();
+/** Cópia em memória: vale quando o navegador não deixa salvar (aba anônima etc.). */
+const memoria: Salvo = ler() ?? { cenas: {} };
+
+/** Só o que mudou nesta aba é gravado, mesclado com o que já está salvo. */
+const cenasPendentes = new Map<string, Colado[]>();
+let fasePendente: string | undefined;
 
 function gravar() {
+  if (!cenasPendentes.size && fasePendente === undefined) return;
   try {
-    localStorage.setItem(CHAVE, JSON.stringify(salvo));
+    const atual = ler();
+    // Se o que está salvo não for legível, não sobrescreve: melhor perder a mudança do que o progresso.
+    if (!atual) return;
+    for (const [id, cena] of cenasPendentes) atual.cenas[id] = cena;
+    if (fasePendente !== undefined) atual.faseAtual = fasePendente;
+    localStorage.setItem(CHAVE, JSON.stringify(atual));
+    cenasPendentes.clear();
+    fasePendente = undefined;
   } catch {
-    /* idem */
+    /* sem armazenamento: segue só com a memória */
   }
 }
 
 export function cenaSalva(faseId: string): Colado[] {
-  return (salvo.cenas[faseId] ?? []).map((c) => ({ ...c }));
+  const pendente = cenasPendentes.get(faseId);
+  const cena = pendente ?? ler()?.cenas[faseId] ?? memoria.cenas[faseId] ?? [];
+  return cena.map((c) => ({ ...c }));
 }
 
 export function faseSalva() {
-  return salvo.faseAtual;
+  return ler()?.faseAtual ?? memoria.faseAtual;
 }
 
 let temporizador = 0;
 export function salvarCena(faseId: string, colados: Colado[]) {
-  salvo.cenas[faseId] = colados.map((c) => ({ ...c }));
+  const copia = colados.map((c) => ({ ...c }));
+  memoria.cenas[faseId] = copia;
+  cenasPendentes.set(faseId, copia);
   clearTimeout(temporizador);
   temporizador = window.setTimeout(gravar, 250);
 }
 
 export function salvarFase(faseId: string) {
-  salvo.faseAtual = faseId;
+  memoria.faseAtual = faseId;
+  fasePendente = faseId;
   gravar();
 }
 
