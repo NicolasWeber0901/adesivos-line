@@ -1,21 +1,21 @@
-name: Publicar no GitHub Pages
+name: Testar e publicar
+
+# main  → https://nicolasweber0901.github.io/adesivos-line/        (a versão que ela usa)
+# teste → https://nicolasweber0901.github.io/adesivos-line/teste/  (salvamento separado)
+#
+# Toda publicação passa antes pelos testes. Se algum falhar, nada é publicado
+# e o site continua na última versão boa.
 
 on:
   push:
-    branches: [main]
+    branches: [main, teste]
   workflow_dispatch:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
-
-concurrency:
-  group: pages
-  cancel-in-progress: true
 
 jobs:
-  build:
+  testar:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -24,19 +24,74 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: Recortar folhas e compilar
+      - name: Recortar, conferir fases publicadas e compilar
         run: npm run build
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v4
+      - name: Testar no celular simulado
+        if: hashFiles('tests/**') != ''
+        run: npx playwright install --with-deps chromium && npm test
+      - name: Guardar o relatório se algo falhar
+        if: failure()
+        uses: actions/upload-artifact@v4
         with:
-          path: dist
+          name: relatorio-testes
+          path: test-results
+          retention-days: 7
 
-  deploy:
-    needs: build
+  # O GitHub Pages só aceita publicação a partir da main. Um push na teste
+  # testado com sucesso pede uma publicação para a main, que monta as duas versões.
+  pedir-publicacao:
+    needs: testar
+    if: github.ref == 'refs/heads/teste'
     runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - run: gh workflow run pages.yml --ref main --repo "$GITHUB_REPOSITORY"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  publicar:
+    needs: testar
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - uses: actions/checkout@v5
+        with:
+          path: principal
+      - name: Baixar a branch de teste (se existir)
+        id: teste
+        run: |
+          if git ls-remote --exit-code --heads "https://github.com/$GITHUB_REPOSITORY" teste; then
+            echo "existe=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v5
+        if: steps.teste.outputs.existe == 'true'
+        with:
+          ref: teste
+          path: teste
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Montar a versão principal
+        working-directory: principal
+        run: npm ci && npm run build
+      - name: Montar a versão de teste
+        if: steps.teste.outputs.existe == 'true'
+        working-directory: teste
+        run: npm ci && VITE_CANAL=teste npm run build && cp -r dist ../principal/dist/teste
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: principal/dist
       - id: deployment
         uses: actions/deploy-pages@v4
