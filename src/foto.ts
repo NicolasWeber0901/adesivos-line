@@ -20,8 +20,12 @@ export async function salvarFoto(fase: FaseManifest, colados: Colado[], porId: M
   let maxY = fase.comodo.h;
   for (const item of itens) {
     if (!item) continue;
-    const meiaW = (item.a.w * item.c.escala) / 2;
-    const meiaH = (item.a.h * item.c.escala) / 2;
+    // Caixa do adesivo já girado.
+    const r = ((item.c.rot ?? 0) * Math.PI) / 180;
+    const cos = Math.abs(Math.cos(r));
+    const sin = Math.abs(Math.sin(r));
+    const meiaW = ((item.a.w * cos + item.a.h * sin) * item.c.escala) / 2;
+    const meiaH = ((item.a.w * sin + item.a.h * cos) * item.c.escala) / 2;
     minX = Math.min(minX, item.c.x - meiaW);
     minY = Math.min(minY, item.c.y - meiaH);
     maxX = Math.max(maxX, item.c.x + meiaW);
@@ -43,6 +47,7 @@ export async function salvarFoto(fase: FaseManifest, colados: Colado[], porId: M
     if (!item) continue;
     ctx.save();
     ctx.translate(item.c.x, item.c.y);
+    ctx.rotate(((item.c.rot ?? 0) * Math.PI) / 180);
     ctx.scale(item.c.escala * (item.c.espelhado ? -1 : 1), item.c.escala);
     ctx.drawImage(item.im.img, -item.a.w / 2, -item.a.h / 2, item.a.w, item.a.h);
     ctx.restore();

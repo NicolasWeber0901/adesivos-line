@@ -15,6 +15,8 @@ Jogo de decorar cômodos isométricos com adesivos, feito para o celular.
 - **Zoom:** pinça com dois dedos fora dos adesivos aproxima e afasta; com o cômodo ampliado, arraste o vazio com um dedo para andar pela cena.
   As lupas no canto esquerdo fazem o mesmo (aproximam no adesivo selecionado) e o botão de moldura volta a mostrar o cômodo inteiro.
   Segurando um adesivo perto da borda com zoom, a cena vai andando junto.
+- **Girar:** no menu do adesivo, **Girar** abre um controle para inclinar a peça (ela "encaixa" no reto, em 45° e em 90°;
+  **Reto** volta a 0°). Com dois dedos, segurando o adesivo com um e girando o outro, também gira.
 - **Fixar:** no menu do adesivo, **Fixar** prende a peça no lugar (não arrasta, não muda de tamanho, não sai).
   Toque nela e use **Soltar** para mexer de novo. Adesivos soltos atrás de uma peça fixa continuam fáceis de pegar.
 - **Desfazer / refazer:** as setas no canto direito voltam e avançam as ações (cada fase tem o seu histórico).
@@ -93,7 +95,7 @@ Opções só da fase:
 3. Se os testes falharem em qualquer etapa, nada é publicado e o site continua na última versão boa.
 
 O que os testes conferem: todas as fases abrem com todos os adesivos, colar/mover/devolver, desfazer/refazer,
-peça fixa, zoom e que um salvamento no formato da primeira versão continua aparecendo.
+peça fixa, girar, zoom e que um salvamento no formato da primeira versão continua aparecendo.
 
 ### Fases já publicadas são protegidas
 

@@ -26,6 +26,9 @@ const btnAfastar = $<HTMLButtonElement>("btn-afastar");
 const btnVerTudo = $<HTMLButtonElement>("btn-ver-tudo");
 const btnDesfazer = $<HTMLButtonElement>("btn-desfazer");
 const btnRefazer = $<HTMLButtonElement>("btn-refazer");
+const giro = $("giro");
+const giroValor = $<HTMLInputElement>("giro-valor");
+const giroTexto = $<HTMLOutputElement>("giro-texto");
 
 const ZOOM_MAX = 4;
 const PASSO_ZOOM = 1.5;
@@ -35,6 +38,9 @@ const BORDA_ROLAGEM = 36;
 const ESCALA_MIN = 0.35;
 const ESCALA_MAX = 3;
 const PASSO_ESCALA = 1.15;
+/** Ângulos que "puxam" o adesivo, para ficar fácil deixar reto. */
+const ENCAIXES = [-180, -90, -45, 0, 45, 90, 180];
+const FOLGA_ENCAIXE = 5;
 /** Quanto o dedo precisa andar para virar arrasto (px de tela). */
 const LIMIAR = 8;
 
@@ -59,6 +65,21 @@ const uid = () =>
   globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 
 const limitar = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
+
+/** Ângulo entre -180 e 180, encaixando perto dos retos. */
+function normalizarAngulo(graus: number) {
+  let a = ((((graus + 180) % 360) + 360) % 360) - 180;
+  const perto = ENCAIXES.find((e) => Math.abs(a - e) <= FOLGA_ENCAIXE);
+  if (perto !== undefined) a = perto === 180 ? -180 : perto;
+  return Math.round(a);
+}
+
+/** Salva sem o campo quando está reto, igual aos salvamentos antigos. */
+function definirRotacao(c: Colado, graus: number) {
+  const a = normalizarAngulo(graus);
+  if (a === 0) delete c.rot;
+  else c.rot = a;
+}
 
 function paraMundo(clientX: number, clientY: number) {
   const r = palco.getBoundingClientRect();
@@ -202,6 +223,7 @@ function desenhar(c: Colado) {
   el.style.setProperty("--y", String(c.y));
   el.style.setProperty("--s", String(c.escala));
   el.style.setProperty("--fx", c.espelhado ? "-1" : "1");
+  el.style.setProperty("--r", String(c.rot ?? 0));
   el.style.zIndex = String(c.z);
   el.classList.toggle("fixo", !!c.fixo);
   if (c.uid === selecionado) atualizarFerramentas(c);
@@ -209,6 +231,10 @@ function desenhar(c: Colado) {
 
 function atualizarFerramentas(c: Colado | undefined) {
   ferramentas.classList.toggle("fixo", !!c?.fixo);
+  if (!c || c.fixo) abrirGiro(false);
+  const rot = c?.rot ?? 0;
+  if (document.activeElement !== giroValor) giroValor.value = String(rot);
+  giroTexto.value = `${rot}°`;
   ferramentas.querySelector('[data-acao="fixar"]')?.setAttribute("aria-pressed", String(!!c?.fixo));
 }
 
@@ -285,8 +311,14 @@ function acertar(ordem: Colado[], wx: number, wy: number): Colado | undefined {
   for (const c of ordem) {
     const a = porId.get(c.aid);
     if (!a) continue;
-    const lx = (wx - c.x) / (c.escala * (c.espelhado ? -1 : 1)) + a.w / 2;
-    const ly = (wy - c.y) / c.escala + a.h / 2;
+    // Desfaz a rotação para cair no sistema da imagem do adesivo.
+    const r = (-(c.rot ?? 0) * Math.PI) / 180;
+    const dx = wx - c.x;
+    const dy = wy - c.y;
+    const rx = dx * Math.cos(r) - dy * Math.sin(r);
+    const ry = dx * Math.sin(r) + dy * Math.cos(r);
+    const lx = rx / (c.escala * (c.espelhado ? -1 : 1)) + a.w / 2;
+    const ly = ry / c.escala + a.h / 2;
     if (lx < 0 || ly < 0 || lx >= a.w || ly >= a.h) continue;
     const im = pronta(a.src);
     if (!im || temTinta(im, lx, ly, Math.max(2, Math.round(4 / (c.escala * escalaMundo))))) return c;
@@ -312,6 +344,9 @@ interface Pinca {
   c: Colado;
   dist0: number;
   escala0: number;
+  /** Girar os dois dedos gira o adesivo. */
+  angulo0: number;
+  rot0: number;
 }
 
 interface Candidato {
@@ -349,6 +384,11 @@ let vazio: Vazio | null = null;
 let pincaVista: PincaVista | null = null;
 let ultimoPonteiro = { x: 0, y: 0 };
 let rolagem = 0;
+
+function anguloDedos() {
+  const [a, b] = [...dedos.values()];
+  return (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI;
+}
 
 function distanciaDedos() {
   const [a, b] = [...dedos.values()];
@@ -440,7 +480,7 @@ palco.addEventListener("pointerdown", (e) => {
     if (arrasto) {
       // Primeiro dedo em cima de um adesivo: a pinça muda o tamanho dele.
       const { c } = arrasto;
-      pinca = { c, dist0: distanciaDedos(), escala0: c.escala };
+      pinca = { c, dist0: distanciaDedos(), escala0: c.escala, angulo0: anguloDedos(), rot0: c.rot ?? 0 };
       elementos.get(c.uid)?.classList.remove("segurando");
       palco.classList.remove("arrastando");
       arrasto = null;
@@ -486,6 +526,7 @@ window.addEventListener("pointermove", (e) => {
 
   if (pinca && dedos.size >= 2) {
     pinca.c.escala = limitar((pinca.escala0 * distanciaDedos()) / pinca.dist0, ESCALA_MIN, ESCALA_MAX);
+    definirRotacao(pinca.c, pinca.rot0 + anguloDedos() - pinca.angulo0);
     desenhar(pinca.c);
     return;
   }
@@ -593,6 +634,9 @@ ferramentas.addEventListener("click", (e) => {
   if (!botao || !c) return;
   if (c.fixo && botao.hasAttribute("data-so-solto")) return;
   switch (botao.dataset.acao) {
+    case "girar":
+      abrirGiro(giro.hidden !== false);
+      return;
     case "fixar":
       c.fixo = !c.fixo || undefined;
       aviso(c.fixo ? "Peça fixada" : "Peça solta");
@@ -720,6 +764,37 @@ function focoDoZoom() {
 btnAproximar.addEventListener("click", () => zoomEm(...focoDoZoom(), zoom * PASSO_ZOOM));
 btnAfastar.addEventListener("click", () => zoomEm(...focoDoZoom(), zoom / PASSO_ZOOM));
 btnVerTudo.addEventListener("click", verTudo);
+
+// ---------------------------------------------------------------- girar
+
+function abrirGiro(abrir: boolean) {
+  giro.hidden = !abrir;
+  ferramentas.classList.toggle("girando", abrir);
+  ferramentas.querySelector('[data-acao="girar"]')?.setAttribute("aria-expanded", String(abrir));
+}
+
+const adesivoSelecionado = () => colados.find((o) => o.uid === selecionado && !o.fixo);
+
+// Enquanto arrasta o controle, só redesenha; ao soltar, vira um passo do desfazer.
+giroValor.addEventListener("input", () => {
+  const c = adesivoSelecionado();
+  if (!c) return;
+  definirRotacao(c, Number(giroValor.value));
+  desenhar(c);
+});
+giroValor.addEventListener("change", () => {
+  const c = adesivoSelecionado();
+  if (!c) return;
+  giroValor.value = String(c.rot ?? 0);
+  guardar();
+});
+$("giro-zerar").addEventListener("click", () => {
+  const c = adesivoSelecionado();
+  if (!c || !c.rot) return;
+  definirRotacao(c, 0);
+  desenhar(c);
+  guardar();
+});
 
 // ---------------------------------------------------------------- desfazer / refazer
 

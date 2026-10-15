@@ -271,8 +271,9 @@ svg {
   --y: 0;
   --s: 1;
   --fx: 1;
+  --r: 0;
   --lift: 1;
-  transform: translate3d(calc(var(--x) * 1px - 50%), calc(var(--y) * 1px - 50%), 0)
+  transform: translate3d(calc(var(--x) * 1px - 50%), calc(var(--y) * 1px - 50%), 0) rotate(calc(var(--r) * 1deg))
     scale(calc(var(--s) * var(--lift) * var(--fx)), calc(var(--s) * var(--lift)));
   transition: filter 140ms ease;
 }
@@ -379,6 +380,60 @@ svg {
   font-weight: 700;
   font-size: 1.15rem;
   white-space: nowrap;
+}
+
+.ferramentas.girando [data-acao="girar"] {
+  background: var(--morango-claro);
+}
+
+/* Controle de rotação: aparece em cima do menu do adesivo. */
+.giro {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: min(300px, calc(100vw - 32px));
+  padding: 6px 8px 6px 12px;
+  background: var(--branco);
+  border: 2px solid var(--tinta);
+  border-radius: 14px;
+  box-shadow: 0 3px 0 var(--tinta);
+}
+
+.giro[hidden] {
+  display: none;
+}
+
+.giro input {
+  flex: 1;
+  min-width: 0;
+  height: 36px;
+  accent-color: var(--morango);
+  touch-action: pan-x;
+}
+
+.giro output {
+  min-width: 3.2ch;
+  text-align: right;
+  font-weight: 600;
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.giro button {
+  display: grid;
+  place-items: center;
+  min-width: 44px;
+  min-height: 36px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--lilas);
+  font-size: 0.75rem;
+  font-weight: 600;
 }
 
 .ferramentas button[data-acao="tirar"] {

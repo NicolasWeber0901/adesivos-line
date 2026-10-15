@@ -212,3 +212,50 @@ test("zoom com pinça no vazio e botões", async ({ page }) => {
   await page.locator("#btn-aproximar").click();
   await expect(page.locator("#palco")).toHaveClass(/ampliado/);
 });
+
+test("girar pelo controle, com dois dedos e desfazer", async ({ page }) => {
+  const cdp = await abrir(page);
+  await irParaFase(page, 1);
+  await tocar(page, cdp, await centro(page, ".figurinha", 2));
+  const adesivo = page.locator(".colado").first();
+  const rot = () => adesivo.evaluate((el) => el.style.getPropertyValue("--r"));
+
+  await page.locator('[data-acao="girar"]').click();
+  await expect(page.locator("#giro")).toBeVisible();
+  await page.locator("#giro-valor").fill("30");
+  expect(await rot()).toBe("30");
+  await page.locator("#giro-valor").fill("3");
+  expect(await rot(), "encaixa no reto").toBe("0");
+  await page.locator("#giro-valor").fill("-62");
+  expect(await rot()).toBe("-62");
+
+  // Continua fácil de pegar depois de girado.
+  const p = await pontoDoAdesivo(page);
+  const antes = await posicao(page);
+  await arrastar(page, cdp, p, [p[0] + 30, p[1] + 20]);
+  expect(await posicao(page)).not.toEqual(antes);
+
+  await page.locator("#btn-desfazer").click();
+  await page.locator("#btn-desfazer").click();
+  expect(await rot()).toBe("0");
+  await page.locator("#btn-refazer").click();
+  expect(await rot()).toBe("-62");
+
+  await page.locator("#giro-zerar").click();
+  expect(await rot()).toBe("0");
+
+  // Dois dedos: o primeiro segura o adesivo e o segundo gira em volta dele.
+  const q = await pontoDoAdesivo(page);
+  await toque(cdp, "touchStart", [q]);
+  await toque(cdp, "touchStart", [q, [q[0] + 60, q[1]]]);
+  for (let i = 1; i <= 8; i++) {
+    const a = ((i * 5) * Math.PI) / 180;
+    await toque(cdp, "touchMove", [q, [q[0] + 60 * Math.cos(a), q[1] + 60 * Math.sin(a)]]);
+  }
+  await toque(cdp, "touchEnd", []);
+  expect(Number(await rot())).toBeGreaterThanOrEqual(35);
+
+  await page.waitForTimeout(400);
+  const cena = (await salvo(page)).cenas[manifest.fases[1].id];
+  expect(cena[0].rot).toBeGreaterThanOrEqual(35);
+});

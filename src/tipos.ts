@@ -33,4 +33,6 @@ export interface Colado {
   z: number;
   /** Peça fixa: não sai do lugar até ser solta. (Ausente nos salvamentos antigos.) */
   fixo?: boolean;
+  /** Rotação em graus, sentido horário. (Ausente = 0, como nos salvamentos antigos.) */
+  rot?: number;
 }
