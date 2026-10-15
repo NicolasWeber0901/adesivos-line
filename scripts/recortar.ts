@@ -8,8 +8,11 @@
  *  4. Gera WebPs em `public/fases/<id>/` e o índice `public/fases/manifest.json`.
  *
  * Ajustes opcionais por folha: `folhas/<mesmo-nome>.json` (veja ConfigFolha).
+ * Uma folha pode ter várias fases (`fases`) e áreas separadas de adesivos (`extras`).
+ * Todas as coordenadas são em pixels da imagem original.
  */
 import sharp from "sharp";
+import { createHash } from "node:crypto";
 import { readdir, readFile, mkdir, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
@@ -17,9 +20,10 @@ import type { AdesivoManifest, FaseManifest } from "../src/tipos.ts";
 
 type Retangulo = [x: number, y: number, w: number, h: number];
 
-interface ConfigFolha {
-  /** Nome exibido no botão da fase. */
-  nome?: string;
+/** Opções que valem para uma área de recorte. */
+interface ConfigRecorte {
+  /** Recorta só dentro deste retângulo; o fundo é lido a partir das bordas dele. */
+  area?: Retangulo;
   /** Regiões apagadas antes do recorte (títulos, marcas d'água, decoração da folha). */
   ignorar?: Retangulo[];
   /** Cada retângulo junta numa peça só todas as peças cujo centro cai dentro dele. */
@@ -40,10 +44,13 @@ interface ConfigFolha {
    * com tudo o que estiver dentro dele.
    */
   separar?: number[][];
+  /**
+   * Peças traçadas à mão: tudo dentro de cada polígono [x1, y1, x2, y2, …] vira uma peça,
+   * até o que parecia fundo. Para tapetes e peças da mesma cor do fundo da folha.
+   */
+  formas?: number[][];
   /** Remove a peça que contém cada ponto [x, y] (repetidos, enfeites da folha…). */
   remover?: [x: number, y: number][];
-  /** Força a região do cômodo, caso a maior peça não seja ele. */
-  comodo?: Retangulo;
   /** Diferença de cor aceita ao "andar" pelo fundo (padrão 30). */
   tolerancia?: number;
   /** Distância em px para considerar duas partes como o mesmo adesivo (padrão 3). */
@@ -53,8 +60,47 @@ interface ConfigFolha {
    * Use em folhas com traço borrado, onde o recorte "come" peças claras.
    */
   fundoFixo?: boolean;
+  /**
+   * Desliga a regra que deixa qualquer branco/cinza claro virar fundo. Use quando há
+   * adesivos brancos sobre fundo claro colorido (o branco deles não pode "vazar").
+   */
+  brancoNaoEFundo?: boolean;
   /** Área mínima em px para virar adesivo (padrão 120). */
   areaMinima?: number;
+  /**
+   * Também tira o fundo de "janelas" fechadas (vão de estante, cerca, alça), desde que tenham
+   * quase exatamente a cor média do fundo e pelo menos este tanto de px.
+   */
+  vazarFuros?: number;
+  /**
+   * Descarta peças que são só traço fino (sombras e contornos soltos de adesivos recortados):
+   * some a peça que desaparece ao "afinar" este tanto de px.
+   */
+  descartarTracos?: number;
+}
+
+/** Uma fase: cômodo + adesivos. */
+interface ConfigFase extends ConfigRecorte {
+  /** Nome exibido no botão da fase. */
+  nome?: string;
+  /** Para folhas com várias fases: final do id da fase (padrão: 1, 2, 3…). */
+  sufixo?: string;
+  /** Força a região do cômodo, caso a maior peça não seja ele. */
+  comodo?: Retangulo;
+  /** Cômodo desenhado de frente e encostado nas bordas: usa este retângulo inteiro como cômodo. */
+  comodoRetangulo?: Retangulo;
+  /** Outras áreas da folha (com fundo próprio) cujas peças viram adesivos desta fase. */
+  extras?: ConfigRecorte[];
+}
+
+/** Arquivo `folhas/<nome>.json`: uma fase, ou várias em `fases`. */
+interface ConfigFolha extends ConfigFase {
+  fases?: ConfigFase[];
+  /**
+   * Cobre logotipos e marcas d'água antes de tudo: cada [x, y, w, h, dx, dy] copia por cima
+   * do retângulo os pixels que estão deslocados (dx, dy) dele.
+   */
+  remendar?: [x: number, y: number, w: number, h: number, dx: number, dy: number][];
 }
 
 interface Peca {
@@ -63,6 +109,18 @@ interface Peca {
   maxX: number;
   maxY: number;
   pixels: number[];
+}
+
+interface Imagem {
+  px: Buffer;
+  W: number;
+  H: number;
+}
+
+interface Analise {
+  pecas: Peca[];
+  fundo: Uint8Array;
+  ref: Float32Array;
 }
 
 const RAIZ = path.resolve(import.meta.dirname, "..");
@@ -94,26 +152,18 @@ function slug(arquivo: string) {
     .replace(/^-|-$/g, "");
 }
 
-async function recortarFolha(arquivo: string): Promise<FaseManifest> {
-  const caminho = path.join(PASTA_FOLHAS, arquivo);
-  const caminhoConfig = caminho.replace(/\.[^.]+$/, ".json");
-  const config: ConfigFolha = existsSync(caminhoConfig)
-    ? JSON.parse(await readFile(caminhoConfig, "utf8"))
-    : {};
-
+/** Remove o fundo e separa as peças de uma área da folha. */
+function analisar({ px, W, H }: Imagem, config: ConfigRecorte): Analise {
+  const N = W * H;
   const tolerancia = config.tolerancia ?? 30;
   const juntarAte = config.juntarAte ?? 3;
   const fundoFixo = config.fundoFixo ?? false;
   const areaMinima = config.areaMinima ?? 120;
-
-  const { data: px, info } = await sharp(caminho)
-    .flatten({ background: "#ffffff" })
-    .ensureAlpha()
-    .raw()
-    .toBuffer({ resolveWithObject: true });
-  const W = info.width;
-  const H = info.height;
-  const N = W * H;
+  const [ax, ay, aw, ah] = config.area ?? [0, 0, W, H];
+  const ax0 = Math.max(0, ax);
+  const ay0 = Math.max(0, ay);
+  const ax1 = Math.min(W, ax + aw) - 1;
+  const ay1 = Math.min(H, ay + ah) - 1;
 
   // Regiões ignoradas viram fundo direto.
   const ignorado = new Uint8Array(N);
@@ -128,6 +178,10 @@ async function recortarFolha(arquivo: string): Promise<FaseManifest> {
   const fila = new Int32Array(N);
   let ini = 0;
   let fim = 0;
+  // Fora da área não existe nada para recortar.
+  if (config.area)
+    for (let y = 0; y < H; y++)
+      for (let x = 0; x < W; x++) if (x < ax0 || x > ax1 || y < ay0 || y > ay1) fundo[y * W + x] = 1;
   const semear = (i: number) => {
     if (fundo[i]) return;
     fundo[i] = 1;
@@ -136,13 +190,13 @@ async function recortarFolha(arquivo: string): Promise<FaseManifest> {
     ref[i * 3 + 2] = px[i * 4 + 2];
     fila[fim++] = i;
   };
-  for (let x = 0; x < W; x++) {
-    semear(x);
-    semear((H - 1) * W + x);
+  for (let x = ax0; x <= ax1; x++) {
+    semear(ay0 * W + x);
+    semear(ay1 * W + x);
   }
-  for (let y = 0; y < H; y++) {
-    semear(y * W);
-    semear(y * W + W - 1);
+  for (let y = ay0; y <= ay1; y++) {
+    semear(y * W + ax0);
+    semear(y * W + ax1);
   }
   for (let i = 0; i < N; i++) if (ignorado[i]) semear(i);
 
@@ -168,7 +222,7 @@ async function recortarFolha(arquivo: string): Promise<FaseManifest> {
       const pertoRef = dist(r, g, b, rr, rg, rb) <= tolerancia;
       const passoSuave =
         !fundoFixo && dist(r, g, b, pr, pg, pb) <= tolerancia * 0.5 && dist(r, g, b, rr, rg, rb) <= tolerancia * 1.6;
-      const viraNeutro = neutroClaro(r, g, b) && neutroClaro(pr, pg, pb);
+      const viraNeutro = !config.brancoNaoEFundo && neutroClaro(r, g, b) && neutroClaro(pr, pg, pb);
       if (pertoRef || passoSuave || viraNeutro) {
         fundo[j] = 1;
         const peso = fundoFixo ? 0 : 0.15;
@@ -177,6 +231,48 @@ async function recortarFolha(arquivo: string): Promise<FaseManifest> {
         ref[j * 3 + 2] = rb * (1 - peso) + b * peso;
         fila[fim++] = j;
       }
+    }
+  }
+
+  // Vãos fechados com a cor do fundo também são fundo.
+  if (config.vazarFuros) {
+    let sr = 0;
+    let sg = 0;
+    let sb = 0;
+    let n = 0;
+    for (let i = 0; i < N; i++)
+      if (fundo[i] && !ignorado[i] && (i % W) >= ax0 && (i % W) <= ax1 && ((i / W) | 0) >= ay0 && ((i / W) | 0) <= ay1) {
+        sr += px[i * 4];
+        sg += px[i * 4 + 1];
+        sb += px[i * 4 + 2];
+        n++;
+      }
+    const [mr, mg, mb] = [sr / n, sg / n, sb / n];
+    const cor = new Uint8Array(N);
+    for (let i = 0; i < N; i++)
+      if (!fundo[i] && dist(px[i * 4], px[i * 4 + 1], px[i * 4 + 2], mr, mg, mb) <= 14) cor[i] = 1;
+    const visto = new Uint8Array(N);
+    for (let s = 0; s < N; s++) {
+      if (!cor[s] || visto[s]) continue;
+      const grupo = [s];
+      visto[s] = 1;
+      for (let k = 0; k < grupo.length; k++) {
+        const i = grupo[k];
+        const x = i % W;
+        const y = (i / W) | 0;
+        for (const j of [x > 0 ? i - 1 : -1, x < W - 1 ? i + 1 : -1, y > 0 ? i - W : -1, y < H - 1 ? i + W : -1])
+          if (j >= 0 && cor[j] && !visto[j]) {
+            visto[j] = 1;
+            grupo.push(j);
+          }
+      }
+      if (grupo.length >= config.vazarFuros)
+        for (const i of grupo) {
+          fundo[i] = 1;
+          ref[i * 3] = mr;
+          ref[i * 3 + 1] = mg;
+          ref[i * 3 + 2] = mb;
+        }
     }
   }
 
@@ -218,7 +314,8 @@ async function recortarFolha(arquivo: string): Promise<FaseManifest> {
           }
         }
     }
-    pecas.push(peca);
+    // A dilatação pode alcançar fora da área; só conta o que tem desenho.
+    if (peca.pixels.length) pecas.push(peca);
   }
   // Separações manuais por polígono.
   const tocadas = new Set<Peca>();
@@ -244,6 +341,24 @@ async function recortarFolha(arquivo: string): Promise<FaseManifest> {
   }
   // O corte deixa lascas soltas da peça vizinha; tira os fragmentos pequenos.
   for (const p of tocadas) if (p.pixels.length) removerLascas(p, W, H);
+
+  // Peças traçadas à mão: o polígono inteiro, inclusive pixels que pareciam fundo.
+  for (const poligono of config.formas ?? []) {
+    const xs = poligono.filter((_, k) => k % 2 === 0);
+    const ys = poligono.filter((_, k) => k % 2 === 1);
+    const dentro = new Set<number>();
+    for (let y = Math.max(ay0, Math.floor(Math.min(...ys))); y <= Math.min(ay1, Math.ceil(Math.max(...ys))); y++)
+      for (let x = Math.max(ax0, Math.floor(Math.min(...xs))); x <= Math.min(ax1, Math.ceil(Math.max(...xs))); x++)
+        if (dentroDoPoligono(x + 0.5, y + 0.5, poligono)) dentro.add(y * W + x);
+    for (const p of pecas) {
+      const ficam = p.pixels.filter((i) => !dentro.has(i));
+      if (ficam.length !== p.pixels.length) recalcularCaixa(p, ficam, W);
+    }
+    pecas = pecas.filter((p) => p.pixels.length > 0);
+    const forma: Peca = { minX: W, minY: H, maxX: 0, maxY: 0, pixels: [] };
+    recalcularCaixa(forma, [...dentro], W);
+    if (forma.pixels.length) pecas.push(forma);
+  }
 
   // Remoções manuais.
   for (const [rx, ry] of config.remover ?? []) {
@@ -279,95 +394,180 @@ async function recortarFolha(arquivo: string): Promise<FaseManifest> {
   }
   // Fragmentos pequenos (sujeira, traços soltos) só entram se foram unidos a algo acima.
   pecas = pecas.filter((p) => p.pixels.length >= areaMinima);
+  if (config.descartarTracos) pecas = pecas.filter((p) => temCorpo(p, W, config.descartarTracos!));
+  // Com vãos vazados, sobram pontinhos da estampa do fundo soltos dentro das peças.
+  if (config.vazarFuros) for (const p of pecas) removerLascas(p, W, H);
 
-  // ---- 3. Cômodo = maior peça (ou a indicada na config).
-  const areaCaixa = (p: Peca) => (p.maxX - p.minX + 1) * (p.maxY - p.minY + 1);
-  let comodo: Peca;
-  if (config.comodo) {
-    const [cx, cy, cw, ch] = config.comodo;
-    comodo = pecas.reduce((melhor, p) => {
+  return { pecas, fundo, ref };
+}
+
+const porPosicao = (a: Peca, b: Peca) => a.minY - b.minY || a.minX - b.minX;
+
+/** Grava a peça como WebP transparente; devolve tamanho e uma assinatura dos pixels. */
+async function exportar(
+  { px, W, H }: Imagem,
+  { fundo, ref }: Pick<Analise, "fundo" | "ref">,
+  p: Peca,
+  destino: string,
+  preencherInterior: boolean,
+) {
+  const N = W * H;
+  const pad = 2;
+  const x0 = Math.max(0, p.minX - pad);
+  const y0 = Math.max(0, p.minY - pad);
+  const x1 = Math.min(W - 1, p.maxX + pad);
+  const y1 = Math.min(H - 1, p.maxY + pad);
+  const w = x1 - x0 + 1;
+  const h = y1 - y0 + 1;
+  const mascara = new Uint8Array(N);
+  for (const i of p.pixels) mascara[i] = 1;
+  if (preencherInterior) preencherBuracos(mascara, W, H, x0, y0, x1, y1);
+
+  const out = Buffer.alloc(w * h * 4);
+  for (let y = y0; y <= y1; y++)
+    for (let x = x0; x <= x1; x++) {
+      const i = y * W + x;
+      const o = ((y - y0) * w + (x - x0)) * 4;
+      if (!mascara[i]) continue;
+      let r = px[i * 4];
+      let g = px[i * 4 + 1];
+      let b = px[i * 4 + 2];
+      let a = 255;
+      // Borda suave: pixels do desenho encostados no fundo ganham transparência parcial.
+      const vizFundo = vizinhoFundo(i, W, H, fundo, mascara);
+      if (vizFundo >= 0) {
+        const fr = ref[vizFundo * 3];
+        const fg = ref[vizFundo * 3 + 1];
+        const fb = ref[vizFundo * 3 + 2];
+        const alfa = Math.min(1, dist(r, g, b, fr, fg, fb) / 110);
+        if (alfa < 1) {
+          a = Math.round(Math.max(0.25, alfa) * 255);
+          const af = a / 255;
+          r = clamp((r - (1 - af) * fr) / af);
+          g = clamp((g - (1 - af) * fg) / af);
+          b = clamp((b - (1 - af) * fb) / af);
+        }
+      }
+      out[o] = r;
+      out[o + 1] = g;
+      out[o + 2] = b;
+      out[o + 3] = a;
+    }
+  await sharp(out, { raw: { width: w, height: h, channels: 4 } })
+    .webp({ quality: 92, alphaQuality: 100 })
+    .toFile(destino);
+  return { w, h, assinatura: assinar(out, w, h) };
+}
+
+/** Cômodo desenhado de frente: o retângulo inteiro, sem tirar fundo. */
+async function exportarRetangulo({ px, W, H }: Imagem, [rx, ry, rw, rh]: Retangulo, destino: string) {
+  const x0 = Math.max(0, rx);
+  const y0 = Math.max(0, ry);
+  const w = Math.min(W, rx + rw) - x0;
+  const h = Math.min(H, ry + rh) - y0;
+  const out = Buffer.alloc(w * h * 4);
+  for (let y = 0; y < h; y++) px.copy(out, y * w * 4, ((y + y0) * W + x0) * 4, ((y + y0) * W + x0 + w) * 4);
+  await sharp(out, { raw: { width: w, height: h, channels: 4 } })
+    .webp({ quality: 92 })
+    .toFile(destino);
+  return { w, h, assinatura: assinar(out, w, h) };
+}
+
+const assinar = (pixels: Buffer, w: number, h: number) =>
+  createHash("sha1").update(`${w}x${h}:`).update(pixels).digest("hex").slice(0, 16);
+
+async function recortarFase(img: Imagem, config: ConfigFase, id: string, nome: string, rotulo: string) {
+  const pastaFase = path.join(PASTA_SAIDA, id);
+  await mkdir(pastaFase, { recursive: true });
+  const destinoComodo = path.join(pastaFase, "comodo.webp");
+
+  let comodo: Awaited<ReturnType<typeof exportar>>;
+  const grupos: { analise: Analise; pecas: Peca[] }[] = [];
+  const pecasDebug: Peca[] = [];
+
+  if (config.comodoRetangulo) {
+    comodo = await exportarRetangulo(img, config.comodoRetangulo, destinoComodo);
+    // O resto da folha (fora do cômodo) é a cartela de adesivos.
+    const analise = analisar(img, { ...config, ignorar: [...(config.ignorar ?? []), config.comodoRetangulo] });
+    grupos.push({ analise, pecas: analise.pecas.sort(porPosicao) });
+    const [x, y, w, h] = config.comodoRetangulo;
+    pecasDebug.push({ minX: x, minY: y, maxX: x + w - 1, maxY: y + h - 1, pixels: [] });
+  } else {
+    const analise = analisar(img, config);
+    const { pecas } = analise;
+    // Cômodo = maior peça (ou a indicada na config).
+    const areaCaixa = (p: Peca) => (p.maxX - p.minX + 1) * (p.maxY - p.minY + 1);
+    let principal: Peca;
+    if (config.comodo) {
+      const [cx, cy, cw, ch] = config.comodo;
       const sobreposicao = (q: Peca) =>
         Math.max(0, Math.min(q.maxX, cx + cw) - Math.max(q.minX, cx)) *
         Math.max(0, Math.min(q.maxY, cy + ch) - Math.max(q.minY, cy));
-      return sobreposicao(p) > sobreposicao(melhor) ? p : melhor;
-    });
-  } else {
-    comodo = pecas.reduce((a, b) => (areaCaixa(b) > areaCaixa(a) ? b : a));
+      principal = pecas.reduce((melhor, p) => (sobreposicao(p) > sobreposicao(melhor) ? p : melhor));
+    } else {
+      principal = pecas.reduce((a, b) => (areaCaixa(b) > areaCaixa(a) ? b : a));
+    }
+    comodo = await exportar(img, analise, principal, destinoComodo, true);
+    grupos.push({ analise, pecas: pecas.filter((p) => p !== principal).sort(porPosicao) });
+    pecasDebug.push(principal);
   }
-  const adesivos = pecas
-    .filter((p) => p !== comodo)
-    .sort((a, b) => a.minY - b.minY || a.minX - b.minX);
 
-  // ---- 4. Exporta.
-  const id = slug(arquivo);
-  const pastaFase = path.join(PASTA_SAIDA, id);
-  await mkdir(pastaFase, { recursive: true });
+  for (const extra of config.extras ?? []) {
+    const analise = analisar(img, extra);
+    grupos.push({ analise, pecas: analise.pecas.sort(porPosicao) });
+  }
 
-  const exportar = async (p: Peca, nomeArquivo: string, preencherInterior: boolean) => {
-    const pad = 2;
-    const x0 = Math.max(0, p.minX - pad);
-    const y0 = Math.max(0, p.minY - pad);
-    const x1 = Math.min(W - 1, p.maxX + pad);
-    const y1 = Math.min(H - 1, p.maxY + pad);
-    const w = x1 - x0 + 1;
-    const h = y1 - y0 + 1;
-    const mascara = new Uint8Array(N);
-    for (const i of p.pixels) mascara[i] = 1;
-    if (preencherInterior) preencherBuracos(mascara, W, H, x0, y0, x1, y1);
-
-    const out = Buffer.alloc(w * h * 4);
-    for (let y = y0; y <= y1; y++)
-      for (let x = x0; x <= x1; x++) {
-        const i = y * W + x;
-        const o = ((y - y0) * w + (x - x0)) * 4;
-        if (!mascara[i]) continue;
-        let r = px[i * 4];
-        let g = px[i * 4 + 1];
-        let b = px[i * 4 + 2];
-        let a = 255;
-        // Borda suave: pixels do desenho encostados no fundo ganham transparência parcial.
-        const vizFundo = vizinhoFundo(i, W, H, fundo, mascara);
-        if (vizFundo >= 0) {
-          const fr = ref[vizFundo * 3];
-          const fg = ref[vizFundo * 3 + 1];
-          const fb = ref[vizFundo * 3 + 2];
-          const alfa = Math.min(1, dist(r, g, b, fr, fg, fb) / 110);
-          if (alfa < 1) {
-            a = Math.round(Math.max(0.25, alfa) * 255);
-            const af = a / 255;
-            r = clamp((r - (1 - af) * fr) / af);
-            g = clamp((g - (1 - af) * fg) / af);
-            b = clamp((b - (1 - af) * fb) / af);
-          }
-        }
-        out[o] = r;
-        out[o + 1] = g;
-        out[o + 2] = b;
-        out[o + 3] = a;
-      }
-    await sharp(out, { raw: { width: w, height: h, channels: 4 } })
-      .webp({ quality: 92, alphaQuality: 100 })
-      .toFile(path.join(pastaFase, nomeArquivo));
-    return { w, h };
-  };
-
-  const dimComodo = await exportar(comodo, "comodo.webp", true);
   const lista: AdesivoManifest[] = [];
-  for (const [n, p] of adesivos.entries()) {
-    const nome = `${String(n + 1).padStart(2, "0")}.webp`;
-    const { w, h } = await exportar(p, nome, false);
-    lista.push({ id: `${id}-${n + 1}`, src: `fases/${id}/${nome}`, w, h });
-  }
+  for (const { analise, pecas } of grupos)
+    for (const p of pecas) {
+      const n = lista.length + 1;
+      const arquivo = `${String(n).padStart(2, "0")}.webp`;
+      const { w, h, assinatura } = await exportar(img, analise, p, path.join(pastaFase, arquivo), false);
+      lista.push({ id: `${id}-${n}`, src: `fases/${id}/${arquivo}`, w, h, assinatura });
+      if (DEBUG) console.log(`    ${arquivo}: x ${p.minX}–${p.maxX}, y ${p.minY}–${p.maxY}`);
+      pecasDebug.push(p);
+    }
 
-  if (DEBUG) await salvarDebug(id, px, W, H, fundo, [comodo, ...adesivos]);
+  if (DEBUG) await salvarDebug(id, img, grupos[0].analise.fundo, pecasDebug);
 
-  console.log(`  ${arquivo}: cômodo ${dimComodo.w}×${dimComodo.h}, ${lista.length} adesivos`);
-  return {
+  console.log(`  ${rotulo}: cômodo ${comodo.w}×${comodo.h}, ${lista.length} adesivos`);
+  const fase: FaseManifest = {
     id,
-    nome: config.nome ?? nomeBonito(arquivo),
-    comodo: { src: `fases/${id}/comodo.webp`, ...dimComodo },
+    nome,
+    comodo: { src: `fases/${id}/comodo.webp`, w: comodo.w, h: comodo.h, assinatura: comodo.assinatura },
     adesivos: lista,
   };
+  return fase;
+}
+
+async function recortarFolha(arquivo: string): Promise<FaseManifest[]> {
+  const caminho = path.join(PASTA_FOLHAS, arquivo);
+  const caminhoConfig = caminho.replace(/\.[^.]+$/, ".json");
+  const config: ConfigFolha = existsSync(caminhoConfig) ? JSON.parse(await readFile(caminhoConfig, "utf8")) : {};
+
+  const { data: px, info } = await sharp(caminho)
+    .flatten({ background: "#ffffff" })
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  const img: Imagem = { px, W: info.width, H: info.height };
+  for (const [x, y, w, h, dx, dy] of config.remendar ?? [])
+    for (let yy = Math.max(0, y); yy < Math.min(img.H, y + h); yy++)
+      for (let xx = Math.max(0, x); xx < Math.min(img.W, x + w); xx++) {
+        const de = ((yy + dy) * img.W + xx + dx) * 4;
+        px.copy(px, (yy * img.W + xx) * 4, de, de + 4);
+      }
+  const base = slug(arquivo);
+
+  if (!config.fases?.length) return [await recortarFase(img, config, base, config.nome ?? nomeBonito(arquivo), arquivo)];
+
+  const fases: FaseManifest[] = [];
+  for (const [i, f] of config.fases.entries()) {
+    const id = `${base}-${slug(f.sufixo ?? String(i + 1))}`;
+    const nome = f.nome ?? `${nomeBonito(arquivo)} ${i + 1}`;
+    fases.push(await recortarFase(img, f, id, nome, `${arquivo} [${i + 1}]`));
+  }
+  return fases;
 }
 
 const clamp = (v: number) => Math.max(0, Math.min(255, Math.round(v)));
@@ -424,6 +624,17 @@ function dentroDoPoligono(x: number, y: number, pts: number[]) {
   return dentro;
 }
 
+/** A peça continua existindo depois de afinada `raio` px? (Traços finos somem.) */
+function temCorpo(p: Peca, W: number, raio: number) {
+  const w = p.maxX - p.minX + 1;
+  const h = p.maxY - p.minY + 1;
+  const fora = new Uint8Array(w * h).fill(1);
+  for (const i of p.pixels) fora[(((i / W) | 0) - p.minY) * w + (i % W) - p.minX] = 0;
+  const foraDilatado = dilatar(fora, w, h, raio);
+  for (let y = raio; y < h - raio; y++) for (let x = raio; x < w - raio; x++) if (!foraDilatado[y * w + x]) return true;
+  return false;
+}
+
 /** Mantém só os pedaços conectados que têm pelo menos 6% do tamanho do maior. */
 function removerLascas(p: Peca, W: number, H: number) {
   const marca = new Set(p.pixels);
@@ -472,7 +683,7 @@ function recalcularCaixa(p: Peca, pixels: number[], W: number) {
 }
 
 /** Fecha contornos abertos dentro da caixa da peça. */
-function fecharContorno(p: Peca, W: number, H: number, raio: number, bordaFecha: NonNullable<ConfigFolha["bordaFecha"]>) {
+function fecharContorno(p: Peca, W: number, H: number, raio: number, bordaFecha: NonNullable<ConfigRecorte["bordaFecha"]>) {
   const x0 = Math.max(0, p.minX - raio - 1);
   const y0 = Math.max(0, p.minY - raio - 1);
   const x1 = Math.min(W - 1, p.maxX + raio + 1);
@@ -518,7 +729,7 @@ function preencherBuracos(
   y0: number,
   x1: number,
   y1: number,
-  bordaFecha: NonNullable<ConfigFolha["bordaFecha"]> = [],
+  bordaFecha: NonNullable<ConfigRecorte["bordaFecha"]> = [],
 ) {
   const w = x1 - x0 + 1;
   const h = y1 - y0 + 1;
@@ -557,7 +768,7 @@ function preencherBuracos(
 }
 
 /** Imagem de conferência: fundo removido em xadrez e caixas numeradas. */
-async function salvarDebug(id: string, px: Buffer, W: number, H: number, fundo: Uint8Array, pecas: Peca[]) {
+async function salvarDebug(id: string, { px, W, H }: Imagem, fundo: Uint8Array, pecas: Peca[]) {
   await mkdir(PASTA_DEBUG, { recursive: true });
   const out = Buffer.from(px);
   for (let i = 0; i < W * H; i++)
@@ -593,7 +804,7 @@ async function main() {
   console.log(`Recortando ${arquivos.length} folha(s)…`);
 
   const fases: FaseManifest[] = [];
-  for (const arquivo of arquivos) fases.push(await recortarFolha(arquivo));
+  for (const arquivo of arquivos) fases.push(...(await recortarFolha(arquivo)));
 
   await writeFile(path.join(PASTA_SAIDA, "manifest.json"), JSON.stringify({ fases }, null, 2));
 }

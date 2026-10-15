@@ -1,0 +1,38 @@
+{
+  "fases": [
+    {
+      "nome": "Livraria",
+      "sufixo": "livraria",
+      "area": [90, 30, 410, 462],
+      "ignorar": [
+        [92, 32, 300, 30]
+      ],
+      "extras": [
+        {
+          "area": [528, 41, 410, 452],
+          "juntarAte": 1,
+          "separar": [
+            [698, 343, 742, 343, 742, 391, 714, 391, 698, 376]
+          ]
+        }
+      ],
+      "remover": [
+        [150, 67]
+      ]
+    },
+    {
+      "nome": "Floricultura",
+      "sufixo": "floricultura",
+      "area": [90, 528, 410, 466],
+      "ignorar": [
+        [92, 532, 300, 48]
+      ],
+      "extras": [
+        {
+          "area": [528, 545, 410, 448],
+          "juntarAte": 1
+        }
+      ]
+    }
+  ]
+}

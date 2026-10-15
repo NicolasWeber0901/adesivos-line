@@ -2,3 +2,5 @@ node_modules
 dist
 public/fases
 .cache
+test-results
+playwright-report

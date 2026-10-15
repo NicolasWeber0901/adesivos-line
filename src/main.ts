@@ -6,6 +6,7 @@ import "./estilo.css";
 import { carregar, pronta, temTinta } from "./imagens.ts";
 import { cenaSalva, faseSalva, salvarAgora, salvarCena, salvarFase } from "./estado.ts";
 import { salvarFoto } from "./foto.ts";
+import { desfazer, iniciarHistorico, podeDesfazer, podeRefazer, refazer, registrar } from "./historico.ts";
 import type { AdesivoManifest, Colado, FaseManifest, Manifest } from "./tipos.ts";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -23,6 +24,8 @@ const dialogoLimpar = $<HTMLDialogElement>("dialogo-limpar");
 const btnAproximar = $<HTMLButtonElement>("btn-aproximar");
 const btnAfastar = $<HTMLButtonElement>("btn-afastar");
 const btnVerTudo = $<HTMLButtonElement>("btn-ver-tudo");
+const btnDesfazer = $<HTMLButtonElement>("btn-desfazer");
+const btnRefazer = $<HTMLButtonElement>("btn-refazer");
 
 const ZOOM_MAX = 4;
 const PASSO_ZOOM = 1.5;
@@ -77,8 +80,41 @@ function aviso(texto: string) {
   setTimeout(() => el.remove(), 2200);
 }
 
+/** Fim de uma ação: salva no celular e vira um passo do desfazer. */
 function guardar() {
   salvarCena(fase.id, colados);
+  registrar(fase.id, colados);
+  atualizarHistorico();
+}
+
+function atualizarHistorico() {
+  btnDesfazer.disabled = !fase || !podeDesfazer(fase.id);
+  btnRefazer.disabled = !fase || !podeRefazer(fase.id);
+}
+
+/** Troca todos os adesivos do cômodo pelos de um estado (desfazer/refazer). */
+function restaurar(estado: Colado[]) {
+  const manter = selecionado;
+  colados = estado.filter((c) => porId.has(c.aid));
+  camadaColados.replaceChildren();
+  elementos.clear();
+  selecionado = null;
+  colados.forEach(criarElemento);
+  selecionar(colados.some((c) => c.uid === manter) ? manter : null);
+  salvarCena(fase.id, colados);
+  atualizarHistorico();
+}
+
+function voltar() {
+  if (arrasto || pinca) return;
+  const estado = desfazer(fase.id);
+  if (estado) restaurar(estado);
+}
+
+function avancar() {
+  if (arrasto || pinca) return;
+  const estado = refazer(fase.id);
+  if (estado) restaurar(estado);
 }
 
 // ---------------------------------------------------------------- palco
@@ -167,6 +203,13 @@ function desenhar(c: Colado) {
   el.style.setProperty("--s", String(c.escala));
   el.style.setProperty("--fx", c.espelhado ? "-1" : "1");
   el.style.zIndex = String(c.z);
+  el.classList.toggle("fixo", !!c.fixo);
+  if (c.uid === selecionado) atualizarFerramentas(c);
+}
+
+function atualizarFerramentas(c: Colado | undefined) {
+  ferramentas.classList.toggle("fixo", !!c?.fixo);
+  ferramentas.querySelector('[data-acao="fixar"]')?.setAttribute("aria-pressed", String(!!c?.fixo));
 }
 
 function criarElemento(c: Colado) {
@@ -200,6 +243,7 @@ function selecionar(id: string | null) {
   selecionado = id;
   if (id) elementos.get(id)?.classList.add("selecionado");
   ferramentas.hidden = !id;
+  atualizarFerramentas(colados.find((c) => c.uid === id));
   atualizarDica();
 }
 
@@ -228,9 +272,16 @@ function descolar(id: string) {
   guardar();
 }
 
-/** Qual adesivo está sob o dedo? Respeita a transparência e a ordem de empilhamento. */
+/**
+ * Qual adesivo está sob o dedo? Respeita a transparência e a ordem de empilhamento.
+ * Peças fixas ficam "por baixo" do toque: um adesivo solto atrás delas ainda pode ser pego.
+ */
 function adesivoEm(wx: number, wy: number): Colado | undefined {
   const ordem = [...colados].sort((a, b) => b.z - a.z);
+  return acertar(ordem.filter((c) => !c.fixo), wx, wy) ?? acertar(ordem.filter((c) => c.fixo), wx, wy);
+}
+
+function acertar(ordem: Colado[], wx: number, wy: number): Colado | undefined {
   for (const c of ordem) {
     const a = porId.get(c.aid);
     if (!a) continue;
@@ -248,6 +299,8 @@ function adesivoEm(wx: number, wy: number): Colado | undefined {
 interface Arrasto {
   pid: number;
   c: Colado;
+  /** Camada antes de segurar: um toque sem arrastar não mexe na ordem. */
+  z0: number;
   dx: number;
   dy: number;
   x0: number;
@@ -271,6 +324,8 @@ interface Candidato {
 /** Um dedo no vazio: toque desmarca; com zoom, arrastar move a vista. */
 interface Vazio {
   pid: number;
+  /** Peça fixa sob o dedo: um toque seleciona (para poder soltar). */
+  fixo?: Colado;
   x0: number;
   y0: number;
   ox0: number;
@@ -333,7 +388,7 @@ function rolarNaBorda() {
 
 function iniciarArrasto(pid: number, c: Colado, clientX: number, clientY: number, x0 = clientX, y0 = clientY) {
   const p = paraMundo(clientX, clientY);
-  arrasto = { pid, c, dx: c.x - p.x, dy: c.y - p.y, x0, y0, moveu: false };
+  arrasto = { pid, c, z0: c.z, dx: c.x - p.x, dy: c.y - p.y, x0, y0, moveu: false };
   trazerPraFrente(c);
   selecionar(c.uid);
   elementos.get(c.uid)?.classList.add("segurando");
@@ -355,13 +410,19 @@ function moverArrasto(clientX: number, clientY: number) {
 
 function terminarArrasto(clientX: number, clientY: number) {
   if (!arrasto) return;
-  const { c } = arrasto;
+  const { c, moveu, z0 } = arrasto;
   elementos.get(c.uid)?.classList.remove("segurando");
   paleta.classList.remove("alvo");
   palco.classList.remove("arrastando");
   arrasto = null;
   cancelAnimationFrame(rolagem);
   rolagem = 0;
+  if (!moveu) {
+    // Só um toque: seleciona, sem virar passo do desfazer.
+    c.z = z0;
+    desenhar(c);
+    return;
+  }
   if (sobreAPaleta(clientX, clientY)) {
     descolar(c.uid);
     return;
@@ -400,8 +461,8 @@ palco.addEventListener("pointerdown", (e) => {
 
   const p = paraMundo(e.clientX, e.clientY);
   const c = adesivoEm(p.x, p.y);
-  if (c) iniciarArrasto(e.pointerId, c, e.clientX, e.clientY);
-  else vazio = { pid: e.pointerId, x0: e.clientX, y0: e.clientY, ox0: origemX, oy0: origemY, moveu: false };
+  if (c && !c.fixo) iniciarArrasto(e.pointerId, c, e.clientX, e.clientY);
+  else vazio = { pid: e.pointerId, fixo: c, x0: e.clientX, y0: e.clientY, ox0: origemX, oy0: origemY, moveu: false };
 });
 
 palco.addEventListener(
@@ -509,7 +570,11 @@ function soltar(e: PointerEvent) {
   }
 
   if (vazio && e.pointerId === vazio.pid) {
-    if (!vazio.moveu && e.type === "pointerup") selecionar(null);
+    if (!vazio.moveu && e.type === "pointerup") selecionar(vazio.fixo?.uid ?? null);
+    else if (vazio.moveu && vazio.fixo && zoom <= 1.001 && e.type === "pointerup") {
+      selecionar(vazio.fixo.uid);
+      aviso("Peça fixa: toque em Soltar para mover");
+    }
     vazio = null;
     return;
   }
@@ -526,7 +591,12 @@ ferramentas.addEventListener("click", (e) => {
   const botao = (e.target as HTMLElement).closest<HTMLButtonElement>("button[data-acao]");
   const c = colados.find((o) => o.uid === selecionado);
   if (!botao || !c) return;
+  if (c.fixo && botao.hasAttribute("data-so-solto")) return;
   switch (botao.dataset.acao) {
+    case "fixar":
+      c.fixo = !c.fixo || undefined;
+      aviso(c.fixo ? "Peça fixada" : "Peça solta");
+      break;
     case "espelhar":
       c.espelhado = !c.espelhado;
       break;
@@ -540,6 +610,7 @@ ferramentas.addEventListener("click", (e) => {
       const menor = colados.reduce((m, o) => Math.min(m, o.z), Infinity);
       c.z = menor - 1;
       // Normaliza para manter os z positivos e pequenos.
+      // Peças fixas atrás das soltas continuam atrás: a ordem relativa delas é mantida.
       [...colados].sort((a, b) => a.z - b.z).forEach((o, i) => {
         o.z = i + 1;
         desenhar(o);
@@ -625,6 +696,8 @@ async function abrirFase(id: string) {
   ferramentas.hidden = true;
   colados = cenaSalva(fase.id).filter((c) => porId.has(c.aid));
   colados.forEach(criarElemento);
+  iniciarHistorico(fase.id, colados);
+  atualizarHistorico();
   atualizarDica();
   montarPaleta();
 
@@ -647,6 +720,19 @@ function focoDoZoom() {
 btnAproximar.addEventListener("click", () => zoomEm(...focoDoZoom(), zoom * PASSO_ZOOM));
 btnAfastar.addEventListener("click", () => zoomEm(...focoDoZoom(), zoom / PASSO_ZOOM));
 btnVerTudo.addEventListener("click", verTudo);
+
+// ---------------------------------------------------------------- desfazer / refazer
+
+btnDesfazer.addEventListener("click", voltar);
+btnRefazer.addEventListener("click", avancar);
+document.addEventListener("keydown", (e) => {
+  if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+  const tecla = e.key.toLowerCase();
+  if (tecla === "z" && !e.shiftKey) voltar();
+  else if ((tecla === "z" && e.shiftKey) || tecla === "y") avancar();
+  else return;
+  e.preventDefault();
+});
 
 // ---------------------------------------------------------------- topo
 
@@ -687,6 +773,14 @@ document.addEventListener("gesturestart", (e) => e.preventDefault());
 document.addEventListener("contextmenu", (e) => e.preventDefault());
 
 // ---------------------------------------------------------------- início
+
+if (import.meta.env.VITE_CANAL === "teste") {
+  document.title = `Teste · ${document.title}`;
+  const selo = document.createElement("div");
+  selo.className = "selo-teste";
+  selo.textContent = "versão de teste";
+  document.body.append(selo);
+}
 
 async function iniciar() {
   try {

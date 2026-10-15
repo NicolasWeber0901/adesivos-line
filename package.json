@@ -7,10 +7,14 @@
     "recortar": "tsx scripts/recortar.ts",
     "recortar:debug": "tsx scripts/recortar.ts --debug",
     "dev": "npm run recortar && vite --host",
-    "build": "npm run recortar && tsc --noEmit && vite build",
-    "preview": "vite preview --host"
+    "build": "npm run recortar && npm run conferir && tsc --noEmit && vite build",
+    "preview": "vite preview --host",
+    "conferir": "tsx scripts/conferir-fases.ts",
+    "travar-fases": "tsx scripts/conferir-fases.ts --travar",
+    "test": "playwright test"
   },
   "devDependencies": {
+    "@playwright/test": "^1.56.1",
     "@types/node": "^26.6.5",
     "sharp": "^0.35.5",
     "tsx": "^4.23.15",

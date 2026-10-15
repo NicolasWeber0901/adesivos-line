@@ -203,6 +203,10 @@ button:focus-visible {
   place-items: center;
 }
 
+.acoes-espaco {
+  height: 4px;
+}
+
 .icone:disabled {
   opacity: 0.35;
   cursor: default;
@@ -286,7 +290,12 @@ svg {
     drop-shadow(0 -1.5px 0 #fff) drop-shadow(0 8px 6px rgb(94 74 99 / 0.28));
 }
 
-.colado.selecionado:not(.segurando) {
+.colado.fixo.selecionado {
+  filter: drop-shadow(1.5px 0 0 #9b86c9) drop-shadow(-1.5px 0 0 #9b86c9) drop-shadow(0 1.5px 0 #9b86c9)
+    drop-shadow(0 -1.5px 0 #9b86c9);
+}
+
+.colado.selecionado:not(.segurando):not(.fixo) {
   filter: drop-shadow(1.5px 0 0 var(--morango)) drop-shadow(-1.5px 0 0 var(--morango))
     drop-shadow(0 1.5px 0 var(--morango)) drop-shadow(0 -1.5px 0 var(--morango));
 }
@@ -337,7 +346,7 @@ svg {
   border: 0;
   background: transparent;
   border-radius: 11px;
-  min-width: 54px;
+  min-width: 50px;
   min-height: 50px;
   padding: 4px 6px 3px;
   display: grid;
@@ -349,6 +358,27 @@ svg {
 
 .ferramentas button:active {
   background: var(--morango-claro);
+}
+
+/* Peça fixa: só dá para soltar ou mandar para trás. */
+.ferramentas.fixo [data-so-solto],
+.ferramentas:not(.fixo) .se-fixo,
+.ferramentas.fixo .se-solto {
+  display: none;
+}
+
+.ferramentas.fixo [data-acao="fixar"] {
+  background: var(--lilas);
+}
+
+.ferramentas.fixo::before {
+  content: "Peça fixa";
+  align-self: center;
+  padding: 0 8px 0 6px;
+  font-family: var(--fonte-mao);
+  font-weight: 700;
+  font-size: 1.15rem;
+  white-space: nowrap;
 }
 
 .ferramentas button[data-acao="tirar"] {
@@ -513,6 +543,21 @@ svg {
   }
 }
 
+.selo-teste {
+  position: fixed;
+  left: 50%;
+  bottom: calc(2px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  padding: 1px 10px;
+  border-radius: 8px;
+  background: #ffd84d;
+  color: var(--tinta);
+  font-size: 0.7rem;
+  font-weight: 600;
+  pointer-events: none;
+  z-index: 10;
+}
+
 .erro {
   margin: auto;
   max-width: 300px;
@@ -528,6 +573,14 @@ svg {
   }
   .paleta-trilho {
     grid-auto-columns: 82px;
+  }
+}
+
+@media (max-width: 380px) {
+  .ferramentas button {
+    min-width: 46px;
+    padding-inline: 3px;
+    font-size: 0.64rem;
   }
 }
 

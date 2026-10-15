@@ -5,12 +5,14 @@ export interface AdesivoManifest {
   /** Tamanho em pixels da folha original: mantém a proporção entre móveis e cômodo. */
   w: number;
   h: number;
+  /** Impressão digital dos pixels: muda se o recorte mudar (veja scripts/conferir-fases.ts). */
+  assinatura?: string;
 }
 
 export interface FaseManifest {
   id: string;
   nome: string;
-  comodo: { src: string; w: number; h: number };
+  comodo: { src: string; w: number; h: number; assinatura?: string };
   adesivos: AdesivoManifest[];
 }
 
@@ -29,4 +31,6 @@ export interface Colado {
   escala: number;
   espelhado: boolean;
   z: number;
+  /** Peça fixa: não sai do lugar até ser solta. (Ausente nos salvamentos antigos.) */
+  fixo?: boolean;
 }

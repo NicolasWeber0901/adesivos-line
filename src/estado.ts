@@ -3,8 +3,9 @@ import type { Colado } from "./tipos.ts";
 /**
  * Tudo fica salvo no próprio navegador do celular.
  * O formato desta chave não pode mudar: é onde estão os cômodos que ela já decorou.
+ * A versão de teste (/teste/) usa outra chave, para nunca mexer no salvamento de verdade.
  */
-const CHAVE = "adesivos-line:v1";
+const CHAVE = import.meta.env.VITE_CANAL === "teste" ? "adesivos-line:teste:v1" : "adesivos-line:v1";
 
 interface Salvo {
   faseAtual?: string;

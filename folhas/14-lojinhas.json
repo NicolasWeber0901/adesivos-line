@@ -1,0 +1,44 @@
+{
+  "fases": [
+    {
+      "nome": "Mercadinho",
+      "sufixo": "mercadinho",
+      "area": [0, 0, 372, 372],
+      "extras": [
+        {
+          "area": [380, 31, 288, 319],
+          "juntarAte": 1,
+          "fundoFixo": false,
+          "brancoNaoEFundo": true,
+          "tolerancia": 30,
+          "separar": [
+            [608, 308, 637, 308, 637, 345, 608, 345]
+          ],
+          "fechar": [
+            [384, 225, 60, 63, 3]
+          ]
+        }
+      ]
+    },
+    {
+      "nome": "Docinhos",
+      "sufixo": "docinhos",
+      "area": [0, 372, 372, 364],
+      "extras": [
+        {
+          "area": [381, 391, 286, 317],
+          "juntarAte": 1,
+          "fundoFixo": false,
+          "brancoNaoEFundo": true,
+          "tolerancia": 30,
+          "fechar": [
+            [544, 402, 48, 53, 3],
+            [558, 600, 37, 78, 3],
+            [393, 635, 51, 33, 3],
+            [388, 675, 20, 22, 2]
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -21,6 +21,13 @@
 
       <main id="palco" class="palco">
         <div class="acoes">
+          <button id="btn-desfazer" class="icone" type="button" aria-label="Desfazer" title="Desfazer (Ctrl+Z)" disabled>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>
+          </button>
+          <button id="btn-refazer" class="icone" type="button" aria-label="Refazer" title="Refazer (Ctrl+Shift+Z)" disabled>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg>
+          </button>
+          <span class="acoes-espaco" aria-hidden="true"></span>
           <button id="btn-foto" class="icone" type="button" aria-label="Salvar foto do cômodo">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8.5A2.5 2.5 0 0 1 6.5 6h1.2l1.2-1.8c.3-.4.7-.7 1.2-.7h3.8c.5 0 .9.3 1.2.7L16.3 6h1.2A2.5 2.5 0 0 1 20 8.5v8a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 16.5z"/><circle cx="12" cy="12.4" r="3.4"/></svg>
           </button>
@@ -45,15 +52,15 @@
         </div>
         <p id="dica" class="dica" hidden>Arraste um adesivo<br />lá de baixo pro cômodo</p>
         <div id="ferramentas" class="ferramentas" hidden>
-          <button type="button" data-acao="espelhar">
+          <button type="button" data-acao="espelhar" data-so-solto>
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M9 7 4 17h5zM15 7l5 10h-5z"/></svg>
             Virar
           </button>
-          <button type="button" data-acao="menor">
+          <button type="button" data-acao="menor" data-so-solto>
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4l5.5 5.5M9.5 5v4.5H5M20 20l-5.5-5.5M14.5 19v-4.5H19"/></svg>
             Menor
           </button>
-          <button type="button" data-acao="maior">
+          <button type="button" data-acao="maior" data-so-solto>
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 9.5 4 4M4 8.5V4h4.5M14.5 14.5 20 20M20 15.5V20h-4.5"/></svg>
             Maior
           </button>
@@ -61,7 +68,13 @@
             <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3.5" width="11" height="11" rx="2.5"/><path d="M15 17.5v.5a2.5 2.5 0 0 1-2.5 2.5h-6A2.5 2.5 0 0 1 4 18v-6a2.5 2.5 0 0 1 2.5-2.5H7"/></svg>
             Pra trás
           </button>
-          <button type="button" data-acao="tirar">
+          <button type="button" data-acao="fixar" aria-pressed="false">
+            <svg class="se-solto" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4h6M10 4v5.5L7 13h10l-3-3.5V4M12 13v7"/></svg>
+            <svg class="se-fixo" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4h6M10 4v5.5L7 13h10l-3-3.5V4M12 13v7M4 4l16 16"/></svg>
+            <span class="se-solto">Fixar</span>
+            <span class="se-fixo">Soltar</span>
+          </button>
+          <button type="button" data-acao="tirar" data-so-solto>
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
             Tirar
           </button>
